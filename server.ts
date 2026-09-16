@@ -168,6 +168,8 @@ const registeredSlashCommands = [
 ];
 
 client.on('ready', async () => {
+  isBotRunning = true;
+  loginError = '';
   console.log(`Bot logged in as ${client.user?.tag}!`);
   applyRpcToBot(client);
   startRpcRotation(client);
@@ -1865,21 +1867,22 @@ client.on('messageCreate', async (message) => {
 });
 
 let isBotRunning = false;
-let isBotManuallyStopped = true; // Đã dừng bot trong môi trường AI Studio theo yêu cầu của bạn (để tránh xung đột khi tự host bên ngoài)
+let isBotManuallyStopped = false; // Đã mở bot lại hoạt động bình thường
 let loginError = '';
 
-// Tự động hủy kết nối nếu client đang kết nối
-try {
-  if (client.isReady()) {
-    client.destroy();
-  }
-} catch {}
-
-// Chỉ đăng nhập nếu không bị dừng thủ công
-if (!isBotManuallyStopped && process.env.DISCORD_TOKEN && process.env.DISCORD_TOKEN !== 'YOUR_DISCORD_BOT_TOKEN') {
+// Đăng nhập bot Discord
+if (process.env.DISCORD_TOKEN && process.env.DISCORD_TOKEN !== 'YOUR_DISCORD_BOT_TOKEN') {
   client.login(process.env.DISCORD_TOKEN)
-    .then(() => { isBotRunning = true; })
-    .catch((err) => { loginError = err.message; console.error("Discord login failed:", err.message); });
+    .then(() => {
+      isBotRunning = true;
+      loginError = '';
+      console.log('✅ Đã kết nối Discord Bot thành công!');
+    })
+    .catch((err) => {
+      loginError = err.message;
+      isBotRunning = false;
+      console.error("Discord login failed:", err.message);
+    });
 }
 
 // --- Express App Setup ---
