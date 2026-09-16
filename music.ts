@@ -161,7 +161,42 @@ async function searchSong(rawQuery: string): Promise<Song | null> {
     }
   }
 
-  // Search on SoundCloud
+  // Search on YouTube first
+  try {
+    const ytResults = await play.search(searchTerm, {
+      source: { youtube: 'video' },
+      limit: 5,
+    });
+
+    if (ytResults && ytResults.length > 0) {
+      const searchWords = searchTerm.toLowerCase().split(/\s+/);
+      
+      // Rank results by title similarity
+      const rankedResults = ytResults.map(track => {
+        const title = (track.title || '').toLowerCase();
+        let score = 0;
+        searchWords.forEach(word => {
+          if (title.includes(word)) score++;
+        });
+        return { track, score };
+      }).sort((a, b) => b.score - a.score);
+
+      const bestMatch = rankedResults[0].track;
+
+      return {
+        title: bestMatch.title || searchTerm,
+        url: bestMatch.url,
+        duration: formatDuration(bestMatch.durationInSec || 0),
+        thumbnail: bestMatch.thumbnails[0]?.url,
+        requestedBy: '',
+        scTrack: null,
+      };
+    }
+  } catch (err) {
+    console.error('YouTube search error:', err);
+  }
+
+  // Fallback: Search on SoundCloud
   try {
     const scResults = await play.search(searchTerm, {
       source: { soundcloud: 'tracks' },
