@@ -55,6 +55,14 @@ import {
   fetchTikTokData
 } from './tiktok';
 
+// Process error handling guards to ensure dev server and preview stability
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection caught (safely bypassed):', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception caught (safely bypassed):', err);
+});
+
 // --- Discord Bot Setup ---
 const client = new Client({
   intents: [
@@ -1701,6 +1709,28 @@ client.on('messageCreate', async (message) => {
             .setTimestamp();
 
           await message.reply({ embeds: [previewEmbed] });
+          return;
+        }
+
+        // .ticket role / .ticket setrole
+        if (sub === 'role' || sub === 'setrole') {
+          if (!message.member?.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+            await message.reply('❌ Bạn cần quyền **Manage Server (Quản lý Máy chủ)** để cấu hình Role Trung Gian!');
+            return;
+          }
+
+          const targetRole = message.mentions.roles.first() || (args[1] ? message.guild.roles.cache.get(args[1].replace(/[^0-9]/g, '')) : null);
+          if (targetRole) {
+            updateTicketConfig({ supportRoleId: targetRole.id });
+            await message.reply(`✅ Đã cập nhật Role Trung Gian cho Ticket là: <@&${targetRole.id}> (\`${targetRole.id}\`). Mọi ticket mới sẽ chỉ ping role này!`);
+            return;
+          }
+
+          const current = getTicketConfig();
+          await message.reply(
+            `🛡️ **Role Trung Gian hiện tại:** <@&${current.supportRoleId || '1548274995325706361'}>\n` +
+            `💡 Để đổi role, gõ: \`${prefix}ticket role @Tên_Role\` hoặc \`${prefix}ticket role <ID_Role>\``
+          );
           return;
         }
 

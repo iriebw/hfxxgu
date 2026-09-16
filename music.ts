@@ -7,6 +7,7 @@ import {
   AudioPlayer,
   VoiceConnection,
   entersState,
+  getVoiceConnection,
 } from '@discordjs/voice';
 import {
   Message,
@@ -31,9 +32,13 @@ async function initSoundCloud() {
       scClientId = freeId;
     }
   } catch {
-    // Fallback ID is already set
+    // Fallback ID is already active
   }
-  await play.setToken({ soundcloud: { client_id: scClientId } });
+  try {
+    await play.setToken({ soundcloud: { client_id: scClientId } });
+  } catch {
+    // Token setting safe catch
+  }
 }
 initSoundCloud();
 
@@ -65,6 +70,14 @@ function formatDuration(seconds: number): string {
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
+function normalizeText(str: string): string {
+  return (str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
 /**
  * Plays the next song in the guild queue
  */
@@ -76,7 +89,7 @@ export async function playNextSong(guildId: string, client: any) {
     queue.isPlaying = false;
     const textChannel = client.channels.cache.get(queue.textChannelId) as TextBasedChannel | undefined;
     if (textChannel && 'send' in textChannel) {
-      textChannel.send('⏹️ Đã phát hết danh sách bài hát trong hàng đợi.').catch(() => {});
+      textChannel.send('⏹️ Đã phát hết danh sách bài hát trong hàng đợi. Gõ `.play <tên bài>` để phát tiếp!').catch(() => {});
     }
     return;
   }
@@ -84,16 +97,29 @@ export async function playNextSong(guildId: string, client: any) {
   const song = queue.songs[0];
 
   try {
-    // Ensure SoundCloud token is ready
-    await play.setToken({ soundcloud: { client_id: scClientId } });
+    await initSoundCloud();
 
-    // Stream from SoundCloud track info
     let stream: any;
     if (song.scTrack) {
       stream = await play.stream_from_info(song.scTrack);
     } else {
-      stream = await play.stream(song.url);
+      // Direct stream fallback
+      const searchRes = await play.search(song.title, { source: { soundcloud: 'tracks' }, limit: 1 });
+      if (searchRes && searchRes.length > 0) {
+        stream = await play.stream_from_info(searchRes[0]);
+      } else {
+        throw new Error('Không thể khởi tạo luồng âm thanh cho bài hát này.');
+      }
     }
+
+    if (!stream || !stream.stream) {
+      throw new Error('Luồng âm thanh trống.');
+    }
+
+    // Attach stream error listener so stream pipeline issues don't crash process
+    stream.stream.on('error', (streamErr: any) => {
+      console.error('Audio stream pipe error:', streamErr);
+    });
 
     const resource = createAudioResource(stream.stream, {
       inputType: stream.type,
@@ -118,7 +144,7 @@ export async function playNextSong(guildId: string, client: any) {
           { name: '👤 Yêu cầu bởi', value: song.requestedBy, inline: true },
           { name: '🔊 Âm lượng', value: `${Math.round(queue.volume * 100)}%`, inline: true }
         )
-        .setFooter({ text: 'SentinelBot Music • Gõ .skip để chuyển bài | .stop để dừng' });
+        .setFooter({ text: 'SentinelBot Music • Gõ .skip để đổi bài | .leave để rời phòng' });
 
       if (song.thumbnail) {
         embed.setThumbnail(song.thumbnail);
@@ -130,7 +156,7 @@ export async function playNextSong(guildId: string, client: any) {
     console.error('Error playing track:', error);
     const textChannel = client.channels.cache.get(queue.textChannelId) as TextBasedChannel | undefined;
     if (textChannel && 'send' in textChannel) {
-      textChannel.send(`⚠️ Lỗi khi phát bài: **${song.title}** (${error.message || 'Lỗi stream'}). Đang chuyển bài tiếp...`).catch(() => {});
+      textChannel.send(`⚠️ Không thể phát bài: **${song.title}** (${error.message || 'Lỗi stream'}). Đang chuyển bài kế tiếp...`).catch(() => {});
     }
     queue.songs.shift();
     playNextSong(guildId, client);
@@ -138,14 +164,14 @@ export async function playNextSong(guildId: string, client: any) {
 }
 
 /**
- * Resolves a song query (keyword or YouTube/SoundCloud URL) into a playable track
+ * Resolves a song query into a playable track via SoundCloud
  */
 async function searchSong(rawQuery: string): Promise<Song | null> {
   await initSoundCloud();
 
   let searchTerm = rawQuery.trim();
 
-  // If query is a YouTube URL, resolve title via public oEmbed API without bot checks
+  // If query is a YouTube URL, resolve title via public oEmbed API
   if (searchTerm.includes('youtube.com/') || searchTerm.includes('youtu.be/')) {
     try {
       const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(searchTerm)}&format=json`;
@@ -161,68 +187,95 @@ async function searchSong(rawQuery: string): Promise<Song | null> {
     }
   }
 
-  // Search on YouTube first
-  try {
-    const ytResults = await play.search(searchTerm, {
-      source: { youtube: 'video' },
-      limit: 5,
-    });
-
-    if (ytResults && ytResults.length > 0) {
-      const searchWords = searchTerm.toLowerCase().split(/\s+/);
-      
-      // Rank results by title similarity
-      const rankedResults = ytResults.map(track => {
-        const title = (track.title || '').toLowerCase();
-        let score = 0;
-        searchWords.forEach(word => {
-          if (title.includes(word)) score++;
-        });
-        return { track, score };
-      }).sort((a, b) => b.score - a.score);
-
-      const bestMatch = rankedResults[0].track;
-
-      return {
-        title: bestMatch.title || searchTerm,
-        url: bestMatch.url,
-        duration: formatDuration(bestMatch.durationInSec || 0),
-        thumbnail: bestMatch.thumbnails[0]?.url,
-        requestedBy: '',
-        scTrack: null,
-      };
-    }
-  } catch (err) {
-    console.error('YouTube search error:', err);
-  }
-
-  // Fallback: Search on SoundCloud
+  // 1. Search on SoundCloud with Smart Relevance Scoring
   try {
     const scResults = await play.search(searchTerm, {
       source: { soundcloud: 'tracks' },
-      limit: 1,
+      limit: 10,
     });
 
     if (scResults && scResults.length > 0) {
-      const track = scResults[0];
+      const normQuery = normalizeText(searchTerm);
+      const queryWords = normQuery.split(/\s+/).filter(Boolean);
+
+      // Rank by title closeness to avoid wrong song selections
+      const scored = scResults.map((track) => {
+        const normTitle = normalizeText(track.name);
+        let score = 0;
+
+        // Exact phrase match
+        if (normTitle === normQuery) {
+          score += 50;
+        } else if (normTitle.includes(normQuery)) {
+          score += 20;
+        }
+
+        // Matching individual words
+        queryWords.forEach((word) => {
+          if (normTitle.includes(word)) {
+            score += 4;
+          }
+        });
+
+        // Penalize remix/mashup if query didn't ask for them
+        if (normTitle.includes('remix') && !normQuery.includes('remix')) score -= 2;
+        if (normTitle.includes('mashup') && !normQuery.includes('mashup')) score -= 2;
+        if (normTitle.includes('karaoke') && !normQuery.includes('karaoke')) score -= 5;
+
+        return { track, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      const best = scored[0].track;
+
       return {
-        title: track.name || searchTerm,
-        url: track.url,
-        duration: formatDuration(track.durationInSec),
-        thumbnail: track.thumbnail,
+        title: best.name || searchTerm,
+        url: best.url,
+        duration: formatDuration(best.durationInSec || 0),
+        thumbnail: best.thumbnail,
         requestedBy: '',
-        scTrack: track,
+        scTrack: best,
       };
     }
   } catch (err) {
     console.error('SoundCloud search error:', err);
   }
 
+  // 2. Fallback: If SoundCloud query didn't find anything, search YouTube to get official title, then search SoundCloud
+  try {
+    const ytResults = await play.search(searchTerm, {
+      source: { youtube: 'video' },
+      limit: 1,
+    });
+
+    if (ytResults && ytResults.length > 0 && ytResults[0].title) {
+      const resolvedTitle = ytResults[0].title;
+      const secondAttempt = await play.search(resolvedTitle, {
+        source: { soundcloud: 'tracks' },
+        limit: 5,
+      });
+
+      if (secondAttempt && secondAttempt.length > 0) {
+        const track = secondAttempt[0];
+        return {
+          title: track.name || resolvedTitle,
+          url: track.url,
+          duration: formatDuration(track.durationInSec || 0),
+          thumbnail: track.thumbnail,
+          requestedBy: '',
+          scTrack: track,
+        };
+      }
+    }
+  } catch (err) {
+    console.error('YouTube title resolve fallback error:', err);
+  }
+
   return null;
 }
 
 /**
- * Handles all music-related commands (.play, .skip, .stop, etc.)
+ * Handles all music-related commands (.play, .skip, .stop, .leave, etc.)
  */
 export async function handleMusicCommand(
   command: string,
@@ -249,11 +302,11 @@ export async function handleMusicCommand(
 
       const query = args.join(' ').trim();
       if (!query) {
-        await message.reply('❌ Vui lòng nhập tên bài hát hoặc link nhạc. Ví dụ: `.play novocaine` hoặc `.play Shape of You`');
+        await message.reply('❌ Vui lòng nhập tên bài hát hoặc link nhạc. Ví dụ: `.play novocaine` hoặc `.play shape of you`');
         return;
       }
 
-      const searchingMsg = await message.reply(`🔍 Đang tìm kiếm và chuẩn bị phát: \`${query}\`...`);
+      const searchingMsg = await message.reply(`🔍 Đang tìm kiếm bài hát: \`${query}\`...`);
 
       try {
         const songInfo = await searchSong(query);
@@ -266,22 +319,25 @@ export async function handleMusicCommand(
         songInfo.requestedBy = message.author.tag;
 
         let queue = musicQueues.get(message.guild.id);
+        let existingConnection = getVoiceConnection(message.guild.id);
 
-        if (!queue) {
-          const connection = joinVoiceChannel({
+        // Ensure voice connection is active and healthy
+        if (!existingConnection || existingConnection.state.status === VoiceConnectionStatus.Destroyed) {
+          existingConnection = joinVoiceChannel({
             channelId: memberVoiceChannel.id,
             guildId: message.guild.id,
             adapterCreator: message.guild.voiceAdapterCreator as any,
           });
+        }
 
+        if (!queue) {
           const player = createAudioPlayer();
-
-          connection.subscribe(player);
+          existingConnection.subscribe(player);
 
           queue = {
             voiceChannelId: memberVoiceChannel.id,
             textChannelId: message.channel.id,
-            connection,
+            connection: existingConnection,
             player,
             songs: [],
             isPlaying: false,
@@ -309,26 +365,35 @@ export async function handleMusicCommand(
             if (currentQueue) {
               const textChannel = client.channels.cache.get(currentQueue.textChannelId) as TextBasedChannel | undefined;
               if (textChannel && 'send' in textChannel) {
-                textChannel.send(`⚠️ Lỗi player: **${err.message || 'Lỗi không xác định'}**. Đang cố gắng khôi phục...`).catch(() => {});
+                textChannel.send(`⚠️ Lỗi player: **${err.message || 'Lỗi không xác định'}**. Đang chuyển bài tiếp...`).catch(() => {});
               }
               if (currentQueue.songs.length > 0) {
                 currentQueue.songs.shift();
                 playNextSong(message.guild!.id, client);
+              } else {
+                currentQueue.isPlaying = false;
               }
             }
           });
 
-          connection.on(VoiceConnectionStatus.Disconnected, async () => {
+          existingConnection.on(VoiceConnectionStatus.Disconnected, async () => {
             try {
               await Promise.race([
-                entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-                entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+                entersState(existingConnection!, VoiceConnectionStatus.Signalling, 4_000),
+                entersState(existingConnection!, VoiceConnectionStatus.Connecting, 4_000),
               ]);
             } catch {
-              connection.destroy();
+              try {
+                existingConnection!.destroy();
+              } catch {}
               musicQueues.delete(message.guild!.id);
             }
           });
+        } else {
+          // If queue exists, ensure connection and channel are in sync
+          queue.connection = existingConnection;
+          queue.voiceChannelId = memberVoiceChannel.id;
+          queue.textChannelId = message.channel.id;
         }
 
         queue.songs.push(songInfo);
@@ -382,10 +447,6 @@ export async function handleMusicCommand(
         await message.reply('❌ Hiện tại không có bài hát nào đang phát để chuyển bài!');
         return;
       }
-      if (!memberVoiceChannel || memberVoiceChannel.id !== queue.voiceChannelId) {
-        await message.reply('❌ Bạn phải ở cùng kênh thoại với Bot để chuyển bài!');
-        return;
-      }
 
       const skippedSong = queue.songs[0]?.title || 'bài hiện tại';
       queue.player.stop();
@@ -395,21 +456,29 @@ export async function handleMusicCommand(
 
     case 'stop':
     case 'leave': {
+      const connection = getVoiceConnection(message.guild.id);
       const queue = musicQueues.get(message.guild.id);
-      if (!queue) {
-        await message.reply('❌ Bot không có trong kênh thoại nào!');
-        return;
-      }
-      if (!memberVoiceChannel || memberVoiceChannel.id !== queue.voiceChannelId) {
-        await message.reply('❌ Bạn phải ở cùng kênh thoại với Bot để dừng nhạc!');
+
+      if (!queue && !connection) {
+        await message.reply('❌ Bot hiện không có trong bất kỳ kênh thoại nào!');
         return;
       }
 
-      queue.songs = [];
-      queue.player.stop();
-      queue.connection.destroy();
+      if (queue) {
+        queue.songs = [];
+        try {
+          queue.player.stop(true);
+        } catch {}
+      }
+
+      if (connection) {
+        try {
+          connection.destroy();
+        } catch {}
+      }
+
       musicQueues.delete(message.guild.id);
-      await message.reply('🛑 Đã dừng phát nhạc, xóa toàn bộ hàng đợi và rời khỏi kênh thoại.');
+      await message.reply('👋 Đã dừng phát nhạc, xóa toàn bộ hàng đợi và rời khỏi kênh thoại.');
       break;
     }
 
@@ -489,5 +558,8 @@ export async function handleMusicCommand(
       await message.reply({ embeds: [embed] });
       break;
     }
+
+    default:
+      break;
   }
 }

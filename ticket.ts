@@ -50,12 +50,13 @@ Khi vào ticket, vui lòng cung cấp đầy đủ thông tin:
 • **Số tiền / Giá trị:**
 • **Ai chịu phí trung gian:**
 
-⚠️ **Lưu ý:** Tuyệt đối không giao dịch ngoài ticket hoặc chuyển tiền khi chưa có xác nhận từ Admin chính thức!
+⚠️ **Lưu ý:** Tuyệt đối không giao dịch ngoài ticket hoặc chuyển tiền khi chưa có xác nhận từ Trung Gian chính thức!
 
-👉 **Bấm vào nút bên dưới để tạo phiên làm việc với support team.**`,
+👉 **Bấm vào nút bên dưới để tạo phiên làm việc với Trung Gian.**`,
   panelColor: '#5865F2',
   panelImageUrl: 'https://i.pinimg.com/1200x/61/05/82/610582ed1ad99e5e455fe16a4b3a9ab1.jpg',
   panelButtonLabel: '🎟️ Tạo Ticket',
+  supportRoleId: '1548274995325706361',
   categoryName: 'TICKETS',
 };
 
@@ -189,24 +190,25 @@ export async function handleCreateTicketButton(interaction: ButtonInteraction) {
       });
     }
 
-    // Nếu cấu hình có supportRoleId thì cho role đó xem
-    if (currentTicketConfig.supportRoleId && guild.roles.cache.has(currentTicketConfig.supportRoleId)) {
-      permissionOverwrites.push({
-        id: currentTicketConfig.supportRoleId,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.ReadMessageHistory,
-        ],
-      });
-    }
+    // Phân quyền cho Role Trung Gian xem và nhắn tin trong ticket
+    const middlemanRoleId = currentTicketConfig.supportRoleId || '1548274995325706361';
+    permissionOverwrites.push({
+      id: middlemanRoleId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.AttachFiles,
+        PermissionFlagsBits.EmbedLinks,
+      ],
+    });
 
     // Tạo kênh Ticket
     const ticketChannel = await guild.channels.create({
       name: channelName,
       type: ChannelType.GuildText,
       parent: category ? category.id : undefined,
-      topic: `Ticket hỗ trợ của @${user.tag} (ID: ${user.id}) • SentinelBot Ticket System`,
+      topic: `Ticket giao dịch của @${user.tag} (ID: ${user.id}) • SentinelBot Ticket System`,
       permissionOverwrites,
     });
 
@@ -223,22 +225,22 @@ export async function handleCreateTicketButton(interaction: ButtonInteraction) {
 
     // Gửi tin nhắn chào mừng và hướng dẫn bên trong kênh ticket vừa tạo
     const welcomeEmbed = new EmbedBuilder()
-      .setTitle(`🎫 PHIÊN TRUNG GIAN & HỖ TRỢ #${ticketChannel.name.toUpperCase()}`)
+      .setTitle(`🎫 PHIÊN TRUNG GIAN GIAO DỊCH #${ticketChannel.name.toUpperCase()}`)
       .setColor('#22C55E')
       .setDescription(
-        `Xin chào <@${user.id}>! Ticket của bạn đã được khởi tạo thành công.\n\n` +
-        `📝 **Vui lòng cung cấp chi tiết yêu cầu:**\n` +
-        `• Bên mua / Bên giao dịch: \n` +
-        `• Bên bán: \n` +
-        `• Nội dung & Giá trị giao dịch: \n` +
-        `• Ai thanh toán phí dịch vụ (nếu có): \n\n` +
-        `🛡️ *Đội ngũ Admin / Support Team sẽ sớm có mặt hỗ trợ bạn. Vui lòng kiên nhẫn chờ trong giây lát!*`
+        `Xin chào <@${user.id}>! Phiên ticket của bạn đã được khởi tạo thành công.\n\n` +
+        `📝 **Vui lòng cung cấp đầy đủ thông tin giao dịch:**\n` +
+        `• **Bên mua:** \n` +
+        `• **Bên bán:** \n` +
+        `• **Nội dung & Số tiền / Giá trị:** \n` +
+        `• **Ai chịu phí trung gian:** \n\n` +
+        `💡 *Sau khi hai bên đã vào kênh và điền xong thông tin, vui lòng bấm nút **🔔 Gọi Trung Gian** bên dưới để Trung Gian vào làm việc!*`
       )
       .addFields(
-        { name: '👤 Người tạo', value: `<@${user.id}> (\`${user.id}\`)`, inline: true },
+        { name: '👤 Người tạo', value: `<@${user.id}>`, inline: true },
         { name: '⏰ Thời gian mở', value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true }
       )
-      .setFooter({ text: 'Nhấn nút bên dưới để đóng ticket khi giao dịch hoàn tất' })
+      .setFooter({ text: 'Nhấn nút bên dưới để đóng ticket hoặc gọi trung gian' })
       .setTimestamp();
 
     const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -249,13 +251,13 @@ export async function handleCreateTicketButton(interaction: ButtonInteraction) {
         .setEmoji('🔒'),
       new ButtonBuilder()
         .setCustomId('btn_ping_admin')
-        .setLabel('🔔 Gọi Admin')
+        .setLabel('🔔 Gọi Trung Gian')
         .setStyle(ButtonStyle.Primary)
         .setEmoji('🔔')
     );
 
     await ticketChannel.send({
-      content: `<@${user.id}> ${currentTicketConfig.supportRoleId ? `<@&${currentTicketConfig.supportRoleId}>` : '@here'} Đã mở ticket mới!`,
+      content: `<@${user.id}> Đã mở ticket giao dịch mới!`,
       embeds: [welcomeEmbed],
       components: [actionRow],
     });
@@ -329,16 +331,14 @@ export async function handleConfirmClose(interaction: ButtonInteraction) {
 }
 
 /**
- * Xử lý nút Gọi Admin
+ * Xử lý nút Gọi Trung Gian
  */
 export async function handlePingAdmin(interaction: ButtonInteraction) {
   if (!interaction.guild) return;
-  const supportMention = currentTicketConfig.supportRoleId
-    ? `<@&${currentTicketConfig.supportRoleId}>`
-    : '@here (Admin/Quản lý)';
+  const middlemanRoleId = currentTicketConfig.supportRoleId || '1548274995325706361';
 
   await interaction.reply({
-    content: `🔔 <@${interaction.user.id}> đang gọi hỗ trợ từ ${supportMention}!`,
+    content: `🔔 <@&${middlemanRoleId}>! Người tạo ticket <@${interaction.user.id}> đang gọi Trung Gian vào hỗ trợ phiên giao dịch này!`,
   });
 }
 
