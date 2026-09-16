@@ -295,16 +295,26 @@ export async function handleMusicCommand(
             const currentQueue = musicQueues.get(message.guild!.id);
             if (currentQueue && currentQueue.songs.length > 0) {
               currentQueue.songs.shift(); // Remove finished song
-              playNextSong(message.guild!.id, client);
+              if (currentQueue.songs.length > 0) {
+                playNextSong(message.guild!.id, client);
+              } else {
+                currentQueue.isPlaying = false;
+              }
             }
           });
 
           player.on('error', (err) => {
             console.error('Player runtime error:', err);
             const currentQueue = musicQueues.get(message.guild!.id);
-            if (currentQueue && currentQueue.songs.length > 0) {
-              currentQueue.songs.shift();
-              playNextSong(message.guild!.id, client);
+            if (currentQueue) {
+              const textChannel = client.channels.cache.get(currentQueue.textChannelId) as TextBasedChannel | undefined;
+              if (textChannel && 'send' in textChannel) {
+                textChannel.send(`⚠️ Lỗi player: **${err.message || 'Lỗi không xác định'}**. Đang cố gắng khôi phục...`).catch(() => {});
+              }
+              if (currentQueue.songs.length > 0) {
+                currentQueue.songs.shift();
+                playNextSong(message.guild!.id, client);
+              }
             }
           });
 
