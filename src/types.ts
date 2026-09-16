@@ -29,6 +29,7 @@ export interface ScanRecord {
 
 export interface BotStatus {
   online: boolean;
+  manuallyStopped?: boolean;
   botName: string | null;
   error: string;
   guildCount: number;
@@ -61,4 +62,30 @@ export interface RobloxUserProfile {
   friendsCount: number;
   followersCount: number;
   followingsCount: number;
+}
+
+export interface TikTokData {
+  id: string;
+  title: string;
+  cover: string;
+  videoUrl: string;
+  hdVideoUrl?: string;
+  musicUrl?: string;
+  musicTitle?: string;
+  musicAuthor?: string;
+  author: {
+    id?: string;
+    uniqueId: string;
+    nickname: string;
+    avatar: string;
+  };
+  stats: {
+    diggCount: number;
+    commentCount: number;
+    shareCount: number;
+    playCount: number;
+  };
+  duration: number;
+  images?: string[];
+  originalUrl: string;
 }

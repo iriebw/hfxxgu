@@ -77,9 +77,9 @@ export async function askGeminiChat(
           }
         });
       } catch (err38: any) {
-        console.warn('gemini-3.8-flash temporarily unavailable, trying gemini-2.5-flash fallback:', err38?.message);
+        console.warn('gemini-3.8-flash fallback to gemini-flash-latest:', err38?.message);
         response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: 'gemini-flash-latest',
           contents: contentsPayload,
           config: {
             systemInstruction: SYSTEM_INSTRUCTION,

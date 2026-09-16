@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Shield, Server, Activity, Bot, Zap, Play, Settings, Sparkles, MessageSquare, ShieldAlert, Gamepad2, Blocks, Ticket, LayoutTemplate } from 'lucide-react';
+import { Shield, Server, Activity, Bot, Zap, Play, Settings, Sparkles, MessageSquare, ShieldAlert, Gamepad2, Blocks, Ticket, LayoutTemplate, Video } from 'lucide-react';
 import AntiRaidDashboard from './components/AntiRaidDashboard';
 import RpcManager from './components/RpcManager';
 import RobloxChecker from './components/RobloxChecker';
 import TicketEmbedManager from './components/TicketEmbedManager';
+import TikTokTester from './components/TikTokTester';
 import ScanHistory from './components/ScanHistory';
 import FunTester from './components/FunTester';
 import AiChatBox from './components/AiChatBox';
@@ -12,12 +13,14 @@ import { ScanRecord, BotStatus } from './types';
 export default function App() {
   const [status, setStatus] = useState<BotStatus>({
     online: false,
+    manuallyStopped: true,
     botName: null,
     error: '',
     guildCount: 0,
   });
 
   const [loading, setLoading] = useState(true);
+  const [toggleLoading, setToggleLoading] = useState(false);
   const [scans, setScans] = useState<ScanRecord[]>([]);
   const [scansLoading, setScansLoading] = useState(true);
 
@@ -29,6 +32,7 @@ export default function App() {
       if (data) {
         setStatus({
           online: Boolean(data.online),
+          manuallyStopped: Boolean(data.manuallyStopped),
           botName: data.botName || null,
           error: data.error || '',
           guildCount: Number(data.guildCount) || 0,
@@ -40,6 +44,23 @@ export default function App() {
       setLoading(false);
     }
   }, []);
+
+  const handleToggleBot = async (action: 'stop' | 'start') => {
+    setToggleLoading(true);
+    try {
+      const res = await fetch(`/api/bot/${action}`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Có lỗi xảy ra');
+      } else {
+        await fetchStatus();
+      }
+    } catch (err: any) {
+      alert(err.message || 'Lỗi kết nối');
+    } finally {
+      setToggleLoading(false);
+    }
+  };
 
   const fetchScans = useCallback(async () => {
     try {
@@ -117,21 +138,45 @@ export default function App() {
         {/* Status Dashboard */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
           <div className="bg-[#1E1F22] rounded-xl p-6 border border-[#2B2D31]">
-            <div className="flex items-center space-x-3 mb-2">
-              <Bot className="w-5 h-5 text-[#949BA4]" />
-              <h2 className="text-[#949BA4] font-semibold">Trạng thái Bot</h2>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center space-x-3">
+                <Bot className="w-5 h-5 text-[#949BA4]" />
+                <h2 className="text-[#949BA4] font-semibold">Trạng thái Bot</h2>
+              </div>
+              {status.online ? (
+                <button
+                  type="button"
+                  disabled={toggleLoading}
+                  onClick={() => handleToggleBot('stop')}
+                  className="text-xs bg-[#DA373C]/20 hover:bg-[#DA373C]/30 text-[#DA373C] border border-[#DA373C]/30 px-2.5 py-1 rounded-md font-medium transition"
+                >
+                  {toggleLoading ? '...' : 'Ngắt kết nối'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={toggleLoading}
+                  onClick={() => handleToggleBot('start')}
+                  className="text-xs bg-[#23A559]/20 hover:bg-[#23A559]/30 text-[#23A559] border border-[#23A559]/30 px-2.5 py-1 rounded-md font-medium transition"
+                >
+                  {toggleLoading ? '...' : 'Khởi động'}
+                </button>
+              )}
             </div>
             {loading ? (
               <div className="text-2xl font-bold text-white animate-pulse">Đang tải...</div>
             ) : (
               <div className="flex items-center space-x-2">
-                <div className={`w-3 h-3 rounded-full ${status.online ? 'bg-[#23A559]' : 'bg-[#DA373C]'}`}></div>
+                <div className={`w-3 h-3 rounded-full ${status.online ? 'bg-[#23A559]' : status.manuallyStopped ? 'bg-amber-400' : 'bg-[#DA373C]'}`}></div>
                 <span className="text-2xl font-bold text-white">
-                  {status.online ? 'Online' : 'Offline'}
+                  {status.online ? 'Online' : status.manuallyStopped ? 'Đã Tạm Dừng' : 'Offline'}
                 </span>
               </div>
             )}
-            {status.botName && <p className="text-sm text-[#949BA4] mt-2">Tag: {status.botName}</p>}
+            {status.manuallyStopped && (
+              <p className="text-xs text-amber-400/90 mt-2 font-medium">Đã ngắt trong này để bạn tự host bên ngoài</p>
+            )}
+            {status.botName && <p className="text-sm text-[#949BA4] mt-1">Tag: {status.botName}</p>}
           </div>
 
           <div className="bg-[#1E1F22] rounded-xl p-6 border border-[#2B2D31]">
@@ -157,8 +202,29 @@ export default function App() {
           </div>
         </div>
 
-        {/* Configuration Notice */}
-        {!status.online && !loading && (
+        {/* Configuration Notice or Manually Stopped Notice */}
+        {status.manuallyStopped ? (
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-6 mb-12 flex items-start space-x-4">
+            <Shield className="w-6 h-6 text-amber-400 flex-shrink-0 mt-1" />
+            <div className="flex-1">
+              <h3 className="text-amber-400 font-bold text-lg mb-1">Đã Dừng Bot Trong Môi Trường Này</h3>
+              <p className="text-[#949BA4] text-sm">
+                Bot đã được ngắt kết nối khỏi Discord trong container này theo yêu cầu của bạn. Điều này đảm bảo khi bạn chạy bot trên nền tảng bên ngoài (như Render, Discloud, VPS), bot sẽ <strong>không bị đăng nhập 2 nơi cùng lúc</strong> và không bị trùng lặp tin nhắn.
+              </p>
+              <div className="mt-3 flex items-center space-x-3">
+                <button
+                  type="button"
+                  disabled={toggleLoading}
+                  onClick={() => handleToggleBot('start')}
+                  className="text-xs bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-3 py-1.5 rounded-lg font-medium transition"
+                >
+                  {toggleLoading ? 'Đang xử lý...' : 'Bật lại Bot trong này'}
+                </button>
+                <span className="text-xs text-[#949BA4]">Web Dashboard vẫn có thể dùng để cấu hình và chỉnh sửa bình thường.</span>
+              </div>
+            </div>
+          </div>
+        ) : !status.online && !loading ? (
           <div className="bg-[#DA373C]/10 border border-[#DA373C]/20 rounded-xl p-6 mb-12 flex items-start space-x-4">
             <Settings className="w-6 h-6 text-[#DA373C] flex-shrink-0 mt-1" />
             <div>
@@ -167,10 +233,13 @@ export default function App() {
               {status.error && <p className="text-red-400 mt-2 text-sm">Lỗi: {status.error}</p>}
             </div>
           </div>
-        )}
+        ) : null}
 
         {/* Discord Bot Rich Presence (RPC) Manager */}
         <RpcManager botName={status.botName} botOnline={status.online} />
+
+        {/* Tự Động Nhận Diện & Tải Link TikTok Không Logo */}
+        <TikTokTester />
 
         {/* Tra cứu tài khoản Roblox (Avatar, Join Date, Link Profile & Lệnh Slash) */}
         <RobloxChecker />
@@ -370,6 +439,28 @@ export default function App() {
               ].map((item) => (
                 <div key={item.cmd} className="flex flex-col border-b border-[#2B2D31] last:border-0 pb-3 last:pb-0">
                   <code className="text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded text-xs mb-1 w-fit">{item.cmd}</code>
+                  <span className="text-[#949BA4] text-xs">{item.desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* TikTok Downloader & Auto-Embed section */}
+          <div className="bg-[#1E1F22] rounded-xl border border-[#EE1D52]/30 overflow-hidden h-fit">
+            <div className="bg-[#EE1D52]/10 p-4 border-b border-[#EE1D52]/20 flex items-center space-x-2">
+              <Video className="w-5 h-5 text-[#EE1D52]" />
+              <h3 className="font-bold text-white text-sm">Tải & Tự Động Nhận Link TikTok</h3>
+            </div>
+            <div className="p-4 space-y-3">
+              {[
+                { cmd: 'Dán link TikTok vào chat', desc: 'Tự động nhận diện & gửi video không logo' },
+                { cmd: '.tiktok <link>', desc: 'Tải video TikTok không watermark (Full HD)' },
+                { cmd: '.tt <link>', desc: 'Lệnh viết tắt cho .tiktok' },
+                { cmd: '/tiktok url: <link>', desc: 'Lệnh Slash tải video trực tiếp' },
+                { cmd: '.tiktok auto on/off', desc: 'Bật/tắt tự động bắt link trong server' },
+              ].map((item) => (
+                <div key={item.cmd} className="flex flex-col border-b border-[#2B2D31] last:border-0 pb-3 last:pb-0">
+                  <code className="text-[#EE1D52] bg-[#EE1D52]/10 px-2 py-1 rounded text-xs mb-1 w-fit">{item.cmd}</code>
                   <span className="text-[#949BA4] text-xs">{item.desc}</span>
                 </div>
               ))}

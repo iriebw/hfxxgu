@@ -27,6 +27,7 @@ import {
   updateTicketConfig,
   setTicketImage,
   buildCustomEmbed,
+  defaultTicketConfig,
 } from './ticket';
 import {
   setupAntiRaidListeners,
@@ -46,6 +47,13 @@ import {
   setRpcAutoRotate,
   BotRpcConfig
 } from './rpc';
+import {
+  extractFirstTikTokUrl,
+  processTikTokLink,
+  isTikTokAutoEmbedEnabled,
+  setTikTokAutoEmbed,
+  fetchTikTokData
+} from './tiktok';
 
 // --- Discord Bot Setup ---
 const client = new Client({
@@ -145,6 +153,18 @@ const registeredSlashCommands = [
     .addAttachmentOption((opt) => opt.setName('thumbnail_file').setDescription('Tải file ảnh nhỏ góc phải').setRequired(false))
     .addChannelOption((opt) => opt.setName('channel').setDescription('Kênh gửi Embed (Mặc định: kênh hiện tại)').setRequired(false))
     .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageMessages),
+  new SlashCommandBuilder()
+    .setName('ai')
+    .setDescription('Trò chuyện, hỏi đáp với AI Gemini 3.8 Flash (có cọc & cà khịa cực mạnh)')
+    .addStringOption((opt) => opt.setName('prompt').setDescription('Câu hỏi hoặc nội dung bạn muốn hỏi AI').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('gemini')
+    .setDescription('Hỏi đáp với Gemini AI siêu thông minh')
+    .addStringOption((opt) => opt.setName('prompt').setDescription('Câu hỏi của bạn').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('tiktok')
+    .setDescription('Tải và xem video TikTok không logo trực tiếp trên Discord')
+    .addStringOption((opt) => opt.setName('url').setDescription('Link video TikTok (vt.tiktok.com hoặc www.tiktok.com/...)').setRequired(true)),
 ];
 
 client.on('ready', async () => {
@@ -524,6 +544,53 @@ client.on('interactionCreate', async (interaction) => {
     }
     return;
   }
+
+  // --- Slash Command: /ai & /gemini ---
+  if (commandName === 'ai' || commandName === 'gemini') {
+    await interaction.deferReply();
+    const prompt = interaction.options.getString('prompt', true);
+    try {
+      const reply = await askGeminiChat(
+        prompt,
+        interaction.user.id,
+        interaction.user.displayName || interaction.user.username
+      );
+      if (reply.length <= 1950) {
+        await interaction.editReply(reply);
+      } else {
+        await interaction.editReply(reply.slice(0, 1950));
+        await (interaction.channel as any)?.send(reply.slice(1950, 3900)).catch(() => {});
+      }
+    } catch (err: any) {
+      await interaction.editReply(`❌ Lỗi AI: ${err.message || 'Không thể kết nối với Gemini'}`);
+    }
+    return;
+  }
+
+  // --- Slash Command: /tiktok ---
+  if (commandName === 'tiktok') {
+    const url = interaction.options.getString('url', true);
+    const validUrl = extractFirstTikTokUrl(url);
+    if (!validUrl) {
+      await interaction.reply({
+        content: '❌ Liên kết không đúng định dạng TikTok! Vui lòng dùng link dạng `https://vt.tiktok.com/...` hoặc `https://www.tiktok.com/...`',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    try {
+      await processTikTokLink(interaction, validUrl);
+    } catch (err: any) {
+      console.error('[TikTok Slash Error]:', err);
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(`❌ Lỗi xử lý video TikTok: ${err.message || 'Không thể tải video'}`);
+      } else {
+        await interaction.reply({ content: `❌ Lỗi: ${err.message}`, ephemeral: true });
+      }
+    }
+    return;
+  }
 });
 
 // Store deleted messages for !snipe
@@ -602,6 +669,19 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // --- Tự động nhận diện link TikTok (Auto-detect TikTok Links) ---
+  if (!message.content.startsWith(prefix) && isTikTokAutoEmbedEnabled(message.guild?.id)) {
+    const tiktokUrl = extractFirstTikTokUrl(message.content);
+    if (tiktokUrl) {
+      try {
+        await processTikTokLink(message, tiktokUrl, { isAutoDetect: true });
+      } catch (err: any) {
+        console.error('[TikTok Auto-Embed Error]:', err);
+      }
+      return;
+    }
+  }
+
   if (!message.content.startsWith(prefix)) return;
 
   const args = message.content.slice(prefix.length).trim().split(/ +/);
@@ -619,6 +699,7 @@ client.on('messageCreate', async (message) => {
           .addFields(
             { name: '🚨 HỆ THỐNG ANTI-RAID & PHÒNG CHỐNG NUKE', value: `\`${prefix}antiraid <on/off/config>\`, \`${prefix}antiraid limit <loại> <số>\`, \`${prefix}whitelist @user\`, \`${prefix}delwhitelist @user\`, \`${prefix}whitelisted\`, \`${prefix}lockdown <on/off>\`, \`${prefix}clearuser @user\`, \`${prefix}raidlogs\`` },
             { name: '🤖 CHAT AI CỌC TÍNH (GEMINI 3.8)', value: `\`${prefix}chat <câu hỏi>\`, \`${prefix}ai <nội dung>\`, hoặc tag trực tiếp \`@SentinelBot\` (Cà khịa cực gắt nếu hỏi ngu 🤣💀🤡🖕)` },
+            { name: '📱 TẢI & NHẬN DIỆN TIKTOK (NO WATERMARK)', value: `\`${prefix}tiktok <link>\`, \`${prefix}tt <link>\`, \`${prefix}tiktok auto <on/off>\`, hoặc Lệnh Slash: \`/tiktok url: <link>\` (Tự động nhận diện link TikTok trong chat, tải video không logo & tách MP3)` },
             { name: '🎯 BẢO MẬT & QUẢN TRỊ', value: `\`${prefix}clean <số|bot|@user|links>\`, \`${prefix}snipe\`, \`${prefix}lock\`, \`${prefix}unlock\`, \`${prefix}slowmode <giây>\`, \`${prefix}kick @user\`, \`${prefix}ban @user\`, \`${prefix}timeout @user <phút>\`, \`${prefix}antinuke <on/off>\`, \`${prefix}antispam <on/off>\`, \`${prefix}scanweb <url>\`, \`${prefix}scanfile\`, \`${prefix}prefix <ký tự mới>\`` },
             { name: '🎮 RICH PRESENCE (RPC)', value: `\`${prefix}rpc <playing/watching/listening/streaming/competing> <tên>\`, \`${prefix}rpc status <online/idle/dnd>\`, \`${prefix}rpc rotate <on/off>\`, \`${prefix}rpc info\`` },
             { name: '🧱 TRA CỨU TÀI KHOẢN ROBLOX', value: `\`${prefix}roblox <username/ID>\`, \`${prefix}rbx <tên>\`, hoặc Lệnh Slash: \`/roblox username: <tên>\` (Xem avatar, ngày join, tuổi acc, link profile)` },
@@ -1383,6 +1464,60 @@ client.on('messageCreate', async (message) => {
         break;
       }
 
+      // --- TikTok Video Downloader & Embed Commands ---
+      case 'tiktok':
+      case 'tt': {
+        const sub = args[0]?.toLowerCase();
+
+        // Cài đặt bật/tắt tự động bắt link TikTok
+        if (sub === 'auto') {
+          if (!message.member?.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+            await message.reply('❌ Bạn cần quyền **Quản lý máy chủ (Manage Server)** để cấu hình tính năng này.');
+            return;
+          }
+
+          const action = args[1]?.toLowerCase();
+          if (action === 'on' || action === 'enable' || action === 'bat' || action === '1') {
+            setTikTokAutoEmbed(message.guild!.id, true);
+            await message.reply('✅ Đã **BẬT** chế độ tự động nhận diện và nhúng video khi có thành viên gửi link TikTok trong server!');
+            return;
+          } else if (action === 'off' || action === 'disable' || action === 'tat' || action === '0') {
+            setTikTokAutoEmbed(message.guild!.id, false);
+            await message.reply('⛔ Đã **TẮT** chế độ tự động nhận diện link TikTok trong server (thành viên vẫn có thể dùng lệnh `.tiktok <link>`).');
+            return;
+          } else {
+            const current = isTikTokAutoEmbedEnabled(message.guild?.id);
+            await message.reply(`⚙️ Trạng thái tự động nhận diện link TikTok hiện tại: **${current ? '🟢 ĐANG BẬT' : '🔴 ĐANG TẮT'}**\n• Bật: \`${prefix}tiktok auto on\`\n• Tắt: \`${prefix}tiktok auto off\``);
+            return;
+          }
+        }
+
+        const url = args[0];
+        if (!url) {
+          const embed = new EmbedBuilder()
+            .setTitle('📱 SentinelBot - Nhận & Tải Link TikTok Không Logo')
+            .setColor('#EE1D52')
+            .setDescription(`Hệ thống hỗ trợ tự động tải video TikTok Full HD không watermark (logo mờ), tách nhạc MP3 và xem trực tiếp trên Discord!`)
+            .addFields(
+              { name: '📥 Cách dùng lệnh', value: `\`${prefix}tiktok <link>\` hoặc \`${prefix}tt <link>\`\n*Ví dụ:* \`${prefix}tiktok https://vt.tiktok.com/ZS.../\`` },
+              { name: '⚡ Tự động nhận diện', value: `Chỉ cần dán link TikTok vào bất kỳ kênh nào, bot sẽ tự động nhận diện và gửi video xem trực tiếp!` },
+              { name: '⚙️ Bật / Tắt tự động', value: `\`${prefix}tiktok auto <on/off>\` (Dành cho Quản trị viên)` }
+            )
+            .setFooter({ text: 'Hỗ trợ link vt.tiktok.com, vm.tiktok.com & tiktok.com' });
+          await message.reply({ embeds: [embed] });
+          return;
+        }
+
+        const validUrl = extractFirstTikTokUrl(url);
+        if (!validUrl) {
+          await message.reply('❌ Đường dẫn không đúng định dạng TikTok! Vui lòng cung cấp link `vt.tiktok.com` hoặc `tiktok.com`.');
+          return;
+        }
+
+        await processTikTokLink(message, validUrl);
+        break;
+      }
+
       // Music Commands
       case 'play':
       case 'skip':
@@ -1730,10 +1865,18 @@ client.on('messageCreate', async (message) => {
 });
 
 let isBotRunning = false;
+let isBotManuallyStopped = true; // Đã dừng bot trong môi trường AI Studio theo yêu cầu của bạn (để tránh xung đột khi tự host bên ngoài)
 let loginError = '';
 
-// Try to login if token is in env on startup
-if (process.env.DISCORD_TOKEN && process.env.DISCORD_TOKEN !== 'YOUR_DISCORD_BOT_TOKEN') {
+// Tự động hủy kết nối nếu client đang kết nối
+try {
+  if (client.isReady()) {
+    client.destroy();
+  }
+} catch {}
+
+// Chỉ đăng nhập nếu không bị dừng thủ công
+if (!isBotManuallyStopped && process.env.DISCORD_TOKEN && process.env.DISCORD_TOKEN !== 'YOUR_DISCORD_BOT_TOKEN') {
   client.login(process.env.DISCORD_TOKEN)
     .then(() => { isBotRunning = true; })
     .catch((err) => { loginError = err.message; console.error("Discord login failed:", err.message); });
@@ -1751,10 +1894,46 @@ async function startServer() {
   app.get('/api/status', (req, res) => {
     res.json({
       online: isBotRunning,
+      manuallyStopped: isBotManuallyStopped,
       botName: client.user?.tag || null,
       error: loginError,
-      guildCount: client.guilds.cache.size,
+      guildCount: client.guilds.cache?.size || 0,
     });
+  });
+
+  // Dừng bot trong môi trường này (ngắt kết nối Discord Gateway)
+  app.post('/api/bot/stop', async (req, res) => {
+    try {
+      isBotManuallyStopped = true;
+      isBotRunning = false;
+      await client.destroy();
+      console.log('🛑 Đã ngắt kết nối Discord Bot trong môi trường AI Studio container.');
+      res.json({ success: true, online: false, manuallyStopped: true });
+    } catch (err: any) {
+      console.error('Lỗi khi dừng bot:', err);
+      res.status(500).json({ error: err.message || 'Lỗi khi ngắt kết nối bot' });
+    }
+  });
+
+  // Khởi động lại bot nếu muốn
+  app.post('/api/bot/start', async (req, res) => {
+    try {
+      const token = process.env.DISCORD_TOKEN;
+      if (!token || token === 'YOUR_DISCORD_BOT_TOKEN') {
+        res.status(400).json({ error: 'Chưa cấu hình biến DISCORD_TOKEN trong môi trường!' });
+        return;
+      }
+      isBotManuallyStopped = false;
+      await client.login(token);
+      isBotRunning = true;
+      loginError = '';
+      console.log('✅ Đã kết nối lại Discord Bot thành công.');
+      res.json({ success: true, online: true, manuallyStopped: false, botName: client.user?.tag });
+    } catch (err: any) {
+      console.error('Lỗi khi bật bot:', err);
+      loginError = err.message;
+      res.status(500).json({ error: err.message || 'Không thể đăng nhập Discord' });
+    }
   });
 
   // Scan History API routes
@@ -1803,6 +1982,30 @@ async function startServer() {
     }
     const result = calculateGayRate(name.toLowerCase(), name);
     res.json(result);
+  });
+
+  // --- TikTok API Endpoints ---
+  app.post('/api/tiktok/info', async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url || typeof url !== 'string') {
+        res.status(400).json({ error: 'Vui lòng cung cấp URL TikTok' });
+        return;
+      }
+      const validUrl = extractFirstTikTokUrl(url);
+      if (!validUrl) {
+        res.status(400).json({ error: 'URL không đúng định dạng TikTok (cần dạng vt.tiktok.com hoặc tiktok.com)' });
+        return;
+      }
+      const data = await fetchTikTokData(validUrl);
+      if (!data) {
+        res.status(404).json({ error: 'Không thể phân tích video này (có thể là video riêng tư hoặc lỗi mạng)' });
+        return;
+      }
+      res.json({ success: true, data });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Lỗi hệ thống khi xử lý TikTok' });
+    }
   });
 
   // --- AI Chat Endpoints ---
@@ -1976,6 +2179,7 @@ async function startServer() {
   // --- Discord Channels List API ---
   app.get('/api/discord/channels', (req, res) => {
     try {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       const guildsData: Array<{
         id: string;
         name: string;
@@ -1983,34 +2187,41 @@ async function startServer() {
         channels: Array<{ id: string; name: string; type: number }>;
       }> = [];
 
-      for (const [, guild] of client.guilds.cache) {
-        const textChannels: Array<{ id: string; name: string; type: number }> = [];
-        for (const [, ch] of guild.channels.cache) {
-          if (ch.isTextBased() && !ch.isThread()) {
-            textChannels.push({
-              id: ch.id,
-              name: ch.name,
-              type: ch.type,
-            });
+      if (client.isReady() && client.guilds?.cache) {
+        for (const [, guild] of client.guilds.cache) {
+          const textChannels: Array<{ id: string; name: string; type: number }> = [];
+          for (const [, ch] of guild.channels.cache) {
+            if (ch.isTextBased() && !ch.isThread()) {
+              textChannels.push({
+                id: ch.id,
+                name: ch.name,
+                type: ch.type,
+              });
+            }
           }
+          guildsData.push({
+            id: guild.id,
+            name: guild.name,
+            icon: guild.iconURL(),
+            channels: textChannels,
+          });
         }
-        guildsData.push({
-          id: guild.id,
-          name: guild.name,
-          icon: guild.iconURL(),
-          channels: textChannels,
-        });
       }
 
       res.json({ success: true, guilds: guildsData });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Lỗi khi lấy danh sách kênh Discord' });
+    } catch {
+      res.json({ success: true, guilds: [] });
     }
   });
 
   // --- Ticket Management Endpoints ---
   app.get('/api/ticket/config', (req, res) => {
-    res.json({ success: true, config: getTicketConfig() });
+    try {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.json({ success: true, config: getTicketConfig() });
+    } catch {
+      res.json({ success: true, config: defaultTicketConfig });
+    }
   });
 
   app.post('/api/ticket/config', (req, res) => {

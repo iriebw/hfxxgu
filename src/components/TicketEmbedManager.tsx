@@ -82,36 +82,52 @@ Khi vào ticket, vui lòng cung cấp đầy đủ thông tin:
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Fetch discord channels
-  const fetchChannels = async () => {
+  // Fetch discord channels with safe retry
+  const fetchChannels = async (retries = 2) => {
     setLoadingChannels(true);
     try {
       const res = await fetch('/api/discord/channels');
-      const data = await res.json();
-      if (data.success && data.guilds) {
-        setGuilds(data.guilds);
-        // Chọn channel đầu tiên nếu chưa chọn
-        if (!selectedChannelId && data.guilds[0]?.channels[0]) {
-          setSelectedChannelId(data.guilds[0].channels[0].id);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.guilds)) {
+          setGuilds(data.guilds);
+          // Chọn channel đầu tiên nếu chưa chọn
+          if (data.guilds[0]?.channels[0]) {
+            setSelectedChannelId((prev) => prev || data.guilds[0].channels[0].id);
+          }
+          return;
         }
       }
-    } catch (err) {
-      console.error('Không thể tải danh sách kênh:', err);
+      if (retries > 0) {
+        setTimeout(() => fetchChannels(retries - 1), 1500);
+      }
+    } catch {
+      if (retries > 0) {
+        setTimeout(() => fetchChannels(retries - 1), 1500);
+      }
     } finally {
       setLoadingChannels(false);
     }
   };
 
-  // Fetch ticket config
-  const fetchTicketConfig = async () => {
+  // Fetch ticket config with safe retry
+  const fetchTicketConfig = async (retries = 2) => {
     try {
       const res = await fetch('/api/ticket/config');
-      const data = await res.json();
-      if (data.success && data.config) {
-        setTicketConfig(data.config);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.config) {
+          setTicketConfig(data.config);
+          return;
+        }
       }
-    } catch (err) {
-      console.error('Không thể tải cấu hình ticket:', err);
+      if (retries > 0) {
+        setTimeout(() => fetchTicketConfig(retries - 1), 1500);
+      }
+    } catch {
+      if (retries > 0) {
+        setTimeout(() => fetchTicketConfig(retries - 1), 1500);
+      }
     }
   };
 
