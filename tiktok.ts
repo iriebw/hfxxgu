@@ -243,6 +243,50 @@ export async function processTikTokLink(
     await target.deferReply();
   }
 
+  // Hàm gửi kết quả: Nếu là Message thông thường, xóa tin nhắn chứa link gốc và gửi video vào kênh kèm tag người gửi
+  const sendResponse = async (payload: {
+    content?: string;
+    embeds?: EmbedBuilder[];
+    files?: AttachmentBuilder[];
+    components?: ActionRowBuilder<ButtonBuilder>[];
+  }) => {
+    if (isInteraction) {
+      await target.editReply(payload);
+      return;
+    }
+
+    const message = target as Message;
+    let deletedOriginal = false;
+
+    // Xóa tin nhắn gốc chứa link để làm sạch kênh chat
+    try {
+      if (message.deletable) {
+        await message.delete();
+        deletedOriginal = true;
+      }
+    } catch (delErr: any) {
+      console.warn('[TikTok] Không thể xóa tin nhắn gốc (có thể thiếu quyền Quản Lý Tin Nhắn):', delErr?.message);
+    }
+
+    try {
+      if (deletedOriginal && 'send' in message.channel) {
+        const credit = `🎬 **TikTok gửi bởi <@${originalUser.id}>:**`;
+        const updatedContent = payload.content ? `${credit}\n${payload.content}` : credit;
+        await (message.channel as any).send({
+          ...payload,
+          content: updatedContent,
+        });
+      } else {
+        await message.reply(payload);
+      }
+    } catch (sendErr: any) {
+      console.error('[TikTok] Lỗi khi gửi kết quả video:', sendErr);
+      if ('send' in message.channel) {
+        await (message.channel as any).send(payload).catch(() => {});
+      }
+    }
+  };
+
   // Lấy dữ liệu video từ TikWM
   const data = await fetchTikTokData(tiktokUrl);
 
@@ -273,11 +317,7 @@ export async function processTikTokLink(
         .setEmoji('▶️')
     );
 
-    if (isInteraction) {
-      await target.editReply({ embeds: [fallbackEmbed], components: [row] });
-    } else {
-      await target.reply({ embeds: [fallbackEmbed], components: [row] });
-    }
+    await sendResponse({ embeds: [fallbackEmbed], components: [row] });
     return;
   }
 
@@ -319,11 +359,7 @@ export async function processTikTokLink(
       );
     }
 
-    if (isInteraction) {
-      await target.editReply({ embeds: [photoEmbed], components: [row] });
-    } else {
-      await target.reply({ embeds: [photoEmbed], components: [row] });
-    }
+    await sendResponse({ embeds: [photoEmbed], components: [row] });
     return;
   }
 
@@ -392,36 +428,20 @@ export async function processTikTokLink(
       name: `tiktok_${data.author.uniqueId}_${data.id || 'video'}.mp4`,
     });
 
-    if (isInteraction) {
-      await target.editReply({
-        embeds: [videoEmbed],
-        files: [videoAttachment],
-        components: [buttonsRow],
-      });
-    } else {
-      await target.reply({
-        embeds: [videoEmbed],
-        files: [videoAttachment],
-        components: [buttonsRow],
-      });
-    }
+    await sendResponse({
+      embeds: [videoEmbed],
+      files: [videoAttachment],
+      components: [buttonsRow],
+    });
   } else {
     // Nếu video > 24MB hoặc không tải được file trực tiếp, dùng vxTikTok link để Discord tự stream video
     const vxUrl = convertToVxTikTok(tiktokUrl);
     const textContent = `🎬 **Video từ @${data.author.uniqueId}:**\n${vxUrl}`;
 
-    if (isInteraction) {
-      await target.editReply({
-        content: textContent,
-        embeds: [videoEmbed],
-        components: [buttonsRow],
-      });
-    } else {
-      await target.reply({
-        content: textContent,
-        embeds: [videoEmbed],
-        components: [buttonsRow],
-      });
-    }
+    await sendResponse({
+      content: textContent,
+      embeds: [videoEmbed],
+      components: [buttonsRow],
+    });
   }
 }

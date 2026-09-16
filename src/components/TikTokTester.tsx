@@ -114,7 +114,7 @@ export default function TikTokTester() {
         <div className="flex items-center space-x-2 text-[#949BA4]">
           <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
           <span>
-            <strong className="text-white">Tự động nhận diện (Auto-Embed):</strong> Bất kỳ ai dán link TikTok vào chat, bot sẽ tự động gửi video không logo, nhạc nền và các nút tiện ích!
+            <strong className="text-white">Tự động nhận diện & Xóa link (Auto-Clean):</strong> Bất kỳ ai gửi link TikTok vào chat, bot sẽ tự động xóa tin nhắn link đó và gửi lại video không logo, MP3 kèm tag người gửi!
           </span>
         </div>
         <div className="text-gray-400 flex items-center space-x-2 flex-shrink-0 font-mono text-[11px]">
