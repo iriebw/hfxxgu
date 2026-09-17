@@ -16,7 +16,7 @@ import {
 import { handleMusicCommand } from './music';
 import { performWebScan, performFileScan, getScanHistory, clearScanHistory } from './scanner';
 import { calculateShip, calculateGayRate } from './fun';
-import { askGeminiChat } from './aiChat';
+import { askAiChat } from './aiChat';
 import { fetchRobloxUser, buildRobloxDiscordEmbed } from './roblox';
 import {
   buildTicketPanel,
@@ -582,7 +582,7 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.deferReply();
     const prompt = interaction.options.getString('prompt', true);
     try {
-      const reply = await askGeminiChat(
+      const reply = await askAiChat(
         prompt,
         interaction.user.id,
         interaction.user.displayName || interaction.user.username
@@ -594,7 +594,7 @@ client.on('interactionCreate', async (interaction) => {
         await (interaction.channel as any)?.send(reply.slice(1950, 3900)).catch(() => {});
       }
     } catch (err: any) {
-      await interaction.editReply(`❌ Lỗi AI: ${err.message || 'Không thể kết nối với Gemini'}`);
+      await interaction.editReply(`❌ Lỗi AI: ${err.message || 'Không thể kết nối với Groq'}`);
     }
     return;
   }
@@ -748,7 +748,7 @@ client.on('messageCreate', async (message) => {
       message.channel.sendTyping().catch(() => {});
     }
 
-    const reply = await askGeminiChat(
+    const reply = await askAiChat(
       cleanContent,
       message.author.id,
       message.member?.displayName || message.author.username

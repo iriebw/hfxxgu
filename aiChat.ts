@@ -1,7 +1,7 @@
-import { GoogleGenAI } from '@google/genai';
+import Groq from 'groq-sdk';
 
 interface ChatHistoryItem {
-  role: 'user' | 'model';
+  role: 'user' | 'assistant';
   text: string;
 }
 
@@ -22,7 +22,7 @@ Tính cách & Quy tắc đối đáp:
    - Dùng Markdown (in đậm, bullet point, block code) để chữ nhìn rõ ràng, dễ đọc trên Discord và Dashboard.
    - Tránh dài dòng lan man, đập thẳng vào trọng tâm, vừa dạy đời vừa roast cực kỳ giải trí!`;
 
-export async function askGeminiChat(
+export async function askAiChat(
   prompt: string,
   userId: string = 'default',
   authorName: string = 'Người dùng',
@@ -36,63 +36,39 @@ export async function askGeminiChat(
   // Lấy hoặc khởi tạo lịch sử trò chuyện
   let history = customHistory || userConversations.get(userId) || [];
 
-  if (process.env.GEMINI_API_KEY) {
+  if (process.env.GROQ_API_KEY) {
     try {
-      const ai = new GoogleGenAI({
-        apiKey: process.env.GEMINI_API_KEY,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
-      });
+      const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-      // Tạo chat session với systemInstruction
       // Định dạng contents từ history + prompt mới
-      const contentsPayload: any[] = [];
+      const messages: any[] = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
       
       // Thêm các lượt chat trước (tối đa 6 tin nhắn gần nhất)
       const recentHistory = history.slice(-6);
       for (const msg of recentHistory) {
-        contentsPayload.push({
-          role: msg.role === 'model' ? 'model' : 'user',
-          parts: [{ text: msg.text }]
+        messages.push({
+          role: msg.role === 'assistant' ? 'assistant' : 'user',
+          content: msg.text
         });
       }
 
       // Thêm câu hỏi hiện tại kèm tên tác giả
-      contentsPayload.push({
+      messages.push({
         role: 'user',
-        parts: [{ text: `[Từ người dùng: ${authorName}]: ${cleanPrompt}` }]
+        content: `[Từ người dùng: ${authorName}]: ${cleanPrompt}`
       });
 
-      let response;
-      try {
-        response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: contentsPayload,
-          config: {
-            systemInstruction: SYSTEM_INSTRUCTION,
-            temperature: 0.7,
-          }
-        });
-      } catch (err38: any) {
-        console.warn('gemini-3.8-flash fallback to gemini-flash-latest:', err38?.message);
-        response = await ai.models.generateContent({
-          model: 'gemini-flash-latest',
-          contents: contentsPayload,
-          config: {
-            systemInstruction: SYSTEM_INSTRUCTION,
-            temperature: 0.7,
-          }
-        });
-      }
+      const chatCompletion = await groq.chat.completions.create({
+        messages: messages,
+        model: 'llama-3.3-70b-versatile', // Hoặc model Groq phù hợp khác
+        temperature: 0.7,
+      });
 
-      const reply = response.text ? response.text.trim() : 'SentinelBot đang suy nghĩ nhưng chưa tìm thấy câu trả lời phù hợp. Bạn thử hỏi lại nhé!';
+      const reply = chatCompletion.choices[0]?.message?.content?.trim() || 'SentinelBot đang suy nghĩ nhưng chưa tìm thấy câu trả lời phù hợp. Bạn thử hỏi lại nhé!';
 
       // Cập nhật lịch sử hội thoại
       history.push({ role: 'user', text: cleanPrompt });
-      history.push({ role: 'model', text: reply });
+      history.push({ role: 'assistant', text: reply });
       if (history.length > 10) {
         history = history.slice(-10);
       }
@@ -100,10 +76,19 @@ export async function askGeminiChat(
 
       return reply;
     } catch (err: any) {
-      console.warn('Gemini API Error in askGeminiChat, checking prompt type:', err?.message);
-      // Nếu là câu hỏi ngớ ngẩn/troll hoặc API nghẽn, tự động roast luôn không cần chần chừ!
-      const lower = cleanPrompt.toLowerCase();
-      const isDumbQuestion = 
+      console.warn('Groq API Error in askAiChat:', err?.message);
+      // Fallback khi lỗi (roast câu hỏi ngớ ngẩn)
+      return handleFallback(cleanPrompt, authorName);
+    }
+  }
+
+  // Fallback thông minh nếu chưa có GROQ_API_KEY
+  return handleFallback(cleanPrompt, authorName);
+}
+
+function handleFallback(prompt: string, authorName: string): string {
+    const lower = prompt.toLowerCase();
+    const isDumbQuestion = 
         lower.includes('1+1') || 
         lower.includes('1 + 1') ||
         lower.includes('nitro free') || 
@@ -118,53 +103,21 @@ export async function askGeminiChat(
         lower.includes('haha') ||
         lower.includes('hihi') ||
         lower.includes('test') ||
-        lower.length < 6;
+        lower.length < 5;
 
-      if (isDumbQuestion) {
+    if (isDumbQuestion) {
         const roasts = [
-          `Ủa alo **${authorName}**? Não để trưng bày cho cân bằng cơ thể hả má? 🤡💀💩 Hỏi câu khôn thế này xứng đáng được trao cúp thần đồng trường xiếc trung ương nha! 🤣😂🖕 Bớt hỏi ngơ ngơ lại giùm tao cái! 🤬😈`,
-          `Hỏi câu này thật đấy hả má **${authorName}**? 💀🤡 Đầu óc thông tuệ cỡ này thì tao quỳ lạy luôn á! Đang rảnh háng hay thích ăn chửi nè? 🤣😂🤬 Đừng bảo bấm vào link lạ rồi mất nick mò lên đây ăn vạ tao nha! 🖕💩😈`,
-          `Thôi xin tha cho tao đi má **${authorName}**! 💀 Phí 10 giây cuộc đời để đọc câu hỏi này luôn á! 🤡💩 Bớt lướt tóp tóp lại rồi nạp i-ốt vào não giùm tao cái nha! 🤣😂🤬🖕`
+        `Ủa alo **${authorName}**? Não để trưng bày cho cân bằng cơ thể hả má? 🤡💀💩 Hỏi câu khôn thế này xứng đáng được trao giải thần đồng trường xiếc trung ương nha! 🤣😂🖕 Bớt hỏi ngơ ngơ lại giùm tao cái! 🤬😈`,
+        `Hỏi câu này thật đấy hả **${authorName}**? 💀🤡 Đầu óc thông tuệ cỡ này thì tao quỳ lạy luôn á! Đang rảnh háng hay thích ăn chửi nè? 🤣😂🤬 Đừng bảo bấm vào link lạ rồi mất nick mò lên đây ăn vạ tao nha! 🖕💩😈`,
+        `Thôi xin tha cho tao đi má **${authorName}**! 💀 Phí 10 giây cuộc đời để đọc câu hỏi này luôn á! 🤡💩 Bớt lướt tóp tóp lại rồi nạp i-ốt vào não giùm tao cái nha! 🤣😂🤬🖕`
         ];
-        return `🔥 **SentinelBot Cọc Đang Trả Lời:**\n\n${roasts[Math.floor(Math.random() * roasts.length)]}`;
-      }
-
-      return `🤬 **Ủa mạng mẽo kiểu gì vậy trời?** Hệ thần kinh AI đang nghẽn một xíu! Chờ 3 giây rồi bấm hỏi lại giùm tao cái coi, đừng có spam nghe chưa má 💀🤡🖕`;
+        const picked = roasts[Math.floor(Math.random() * roasts.length)];
+        return `🔥 **SentinelBot Cọc Đang Trả Lời:**\n\n${picked}\n\n*(💡 Muốn bot phân tích sâu hơn nữa thì nhớ thêm \`GROQ_API_KEY\` vào Settings nhé má!)*`;
     }
-  }
 
-  // Fallback thông minh nếu chưa có GEMINI_API_KEY
-  const lower = cleanPrompt.toLowerCase();
-  const isDumbQuestion = 
-    lower.includes('1+1') || 
-    lower.includes('1 + 1') ||
-    lower.includes('nitro free') || 
-    lower.includes('nhận nitro') ||
-    lower.includes('mày là ai') || 
-    lower.includes('may la ai') ||
-    lower.includes('ngu') || 
-    lower.includes('óc') ||
-    lower.includes('tắt máy') || 
-    lower.includes('bật máy') ||
-    lower.includes('ai ngu') ||
-    lower.includes('haha') ||
-    lower.includes('hihi') ||
-    lower.includes('test') ||
-    lower.length < 5;
-
-  if (isDumbQuestion) {
-    const roasts = [
-      `Ủa alo **${authorName}**? Não để trưng bày cho cân bằng cơ thể hả má? 🤡💀💩 Hỏi câu khôn thế này xứng đáng được trao giải thần đồng trường xiếc trung ương nha! 🤣😂🖕 Bớt hỏi ngơ ngơ lại giùm tao cái! 🤬😈`,
-      `Hỏi câu này thật đấy hả **${authorName}**? 💀🤡 Đầu óc thông tuệ cỡ này thì tao quỳ lạy luôn á! Đang rảnh háng hay thích ăn chửi nè? 🤣😂🤬 Đừng bảo bấm vào link lạ rồi mất nick mò lên đây ăn vạ tao nha! 🖕💩😈`,
-      `Thôi xin tha cho tao đi má **${authorName}**! 💀 Phí 10 giây cuộc đời để đọc câu hỏi này luôn á! 🤡💩 Bớt lướt tóp tóp lại rồi nạp i-ốt vào não giùm tao cái nha! 🤣😂🤬🖕`
-    ];
-    const picked = roasts[Math.floor(Math.random() * roasts.length)];
-    return `🔥 **SentinelBot Cọc Đang Trả Lời:**\n\n${picked}\n\n*(💡 Muốn bot phân tích sâu hơn nữa thì nhớ thêm \`GEMINI_API_KEY\` vào Settings nhé má!)*`;
-  }
-
-  return `🤖 **SentinelBot AI (Chế độ Cọc Online):**
-Đang chạy dự phòng vì Admin chưa nạp \`GEMINI_API_KEY\` nè má **${authorName}**! 🤡
-Cơ mà tao vẫn nhắc nhẹ: Cấm click link bậy bạ, bật 2FA lên không là toang nick Discord đừng có khóc tiếng Mán nha! 😈💀`;
+    return `🤖 **SentinelBot AI (Chế độ Cọc Online):**
+    Đang chạy dự phòng vì Admin chưa nạp \`GROQ_API_KEY\` nè má **${authorName}**! 🤡
+    Cơ mà tao vẫn nhắc nhẹ: Cấm click link bậy bạ, bật 2FA lên không là toang nick Discord đừng có khóc tiếng Mán nha! 😈💀`;
 }
 
 export function clearUserChatHistory(userId: string) {
