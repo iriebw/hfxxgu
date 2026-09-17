@@ -10,7 +10,8 @@ import {
   PermissionsBitField,
   Collection,
   Message,
-  SlashCommandBuilder
+  SlashCommandBuilder,
+  WebhookClient
 } from 'discord.js';
 import { handleMusicCommand } from './music';
 import { performWebScan, performFileScan, getScanHistory, clearScanHistory } from './scanner';
@@ -97,6 +98,9 @@ const antiNukeEnabled = new Set<string>(); // Guild IDs where antinuke is on
 
 // Custom Prefix per guild
 const guildPrefixes = new Map<string, string>();
+
+// Webhook mimicry (channelId -> Webhook URL)
+const activeWebhooks = new Map<string, string>();
 
 // Slash Commands Registry
 const registeredSlashCommands = [
@@ -710,6 +714,22 @@ client.on('messageCreate', async (message) => {
     }
   }
 
+  // --- Webhook Mimicry Logic ---
+  if (activeWebhooks.has(message.channel.id)) {
+    const webhookUrl = activeWebhooks.get(message.channel.id)!;
+    const webhookClient = new WebhookClient({ url: webhookUrl });
+    try {
+      await webhookClient.send({
+        content: message.content || '*(tin nhắn không có nội dung văn bản)*',
+        username: message.member?.displayName || message.author.username,
+        avatarURL: message.author.displayAvatarURL(),
+        files: Array.from(message.attachments.values()).map(a => a.url),
+      });
+    } catch (err) {
+      console.error('[Webhook Mimicry Error]:', err);
+    }
+  }
+
   // --- Command & Mention Handling ---
   const prefix = message.guild ? (guildPrefixes.get(message.guild.id) || '.') : '.';
 
@@ -776,6 +796,7 @@ client.on('messageCreate', async (message) => {
             { name: '🎯 BẢO MẬT & QUẢN TRỊ', value: `\`${prefix}clean <số|bot|@user|links>\`, \`${prefix}snipe\`, \`${prefix}lock\`, \`${prefix}unlock\`, \`${prefix}slowmode <giây>\`, \`${prefix}kick @user\`, \`${prefix}ban @user\`, \`${prefix}timeout @user <phút>\`, \`${prefix}antinuke <on/off>\`, \`${prefix}antispam <on/off>\`, \`${prefix}scanweb <url>\`, \`${prefix}scanfile\`, \`${prefix}prefix <ký tự mới>\`` },
             { name: '🎮 RICH PRESENCE (RPC)', value: `\`${prefix}rpc <playing/watching/listening/streaming/competing> <tên>\`, \`${prefix}rpc status <online/idle/dnd>\`, \`${prefix}rpc rotate <on/off>\`, \`${prefix}rpc info\`` },
             { name: '👤 THÔNG TIN & HỒ SƠ NGƯỜI DÙNG', value: `\`${prefix}w [@user|ID]\`, \`${prefix}whois\`, \`${prefix}avt [@user|ID]\`, \`${prefix}banner [@user|ID]\` (Xem hồ sơ tài khoản, ngày tạo acc, ngày join server, badges, vai trò, quyền hạn, avatar full HD & banner)` },
+            { name: '🔗 AUTO CHAT (WEBHOOK)', value: `\`${prefix}autochat on [link_webhook]\` (Bật, nếu ko nhập link bot sẽ tự tạo), \`${prefix}autochat off\` (Tắt nội bộ), \`${prefix}autochat clear\` (Xóa toàn bộ webhook trong kênh)` },
             { name: '🧱 TRA CỨU TÀI KHOẢN ROBLOX', value: `\`${prefix}roblox <username/ID>\`, \`${prefix}rbx <tên>\`, hoặc Lệnh Slash: \`/roblox username: <tên>\` (Xem avatar, ngày join, tuổi acc, link profile)` },
             { name: '🎉 GIẢI TRÍ & THẦN SỐ HỌC', value: `\`${prefix}ghepdoi @crush\`, \`${prefix}ghepdoi @user1 @user2\`, \`${prefix}gay [@user]\`` },
             { name: '🎵 ÂM NHẠC & VOICE', value: `\`${prefix}play <tên/link>\`, \`${prefix}skip\`, \`${prefix}stop\`, \`${prefix}pause\`, \`${prefix}resume\`, \`${prefix}volume <1-150>\`, \`${prefix}queue\`, \`${prefix}nowplaying\`` }
@@ -1744,6 +1765,61 @@ client.on('messageCreate', async (message) => {
         }
 
         await message.reply(`Không rõ loại hoạt động. Sử dụng: \`${prefix}rpc <playing|watching|listening|streaming|competing|status|rotate>\``);
+        break;
+      }
+
+      // --- Auto Chat Commands ---
+      case 'autochat': {
+        const sub = args[0]?.toLowerCase();
+        if (!message.member?.permissions.has(PermissionsBitField.Flags.ManageWebhooks)) {
+          await message.reply('❌ Bạn cần quyền **Quản lý Webhook** để dùng lệnh này!');
+          return;
+        }
+
+        if (sub === 'on') {
+          const url = args[1];
+          if (url && url.startsWith('https://discord.com/api/webhooks/')) {
+            activeWebhooks.set(message.channel.id, url);
+            await message.reply('✅ Đã kích hoạt chế độ tự động chat (copy/nhái) bằng Webhook tại kênh này!');
+          } else {
+            // Tự tạo Webhook
+            if (!message.guild?.members.me?.permissions.has(PermissionsBitField.Flags.ManageWebhooks)) {
+              await message.reply('❌ Bot không có quyền **Quản lý Webhook** để tự tạo!');
+              return;
+            }
+            try {
+              const webhook = await (message.channel as any).createWebhook({
+                name: 'Sentinel AutoChat',
+                avatar: client.user?.displayAvatarURL(),
+                reason: 'Auto-created by SentinelBot'
+              });
+              activeWebhooks.set(message.channel.id, webhook.url);
+              await message.reply(`✅ Đã tự tạo Webhook mới và kích hoạt chế độ tự động chat tại kênh này!`);
+            } catch (err: any) {
+              await message.reply(`❌ Không thể tự tạo Webhook: ${err.message}`);
+            }
+          }
+        } else if (sub === 'off') {
+          activeWebhooks.delete(message.channel.id);
+          await message.reply('🗑️ Đã xóa liên kết Webhook (nội bộ) và tắt chế độ tự động chat tại kênh này.');
+        } else if (sub === 'clear') {
+          if (!message.guild?.members.me?.permissions.has(PermissionsBitField.Flags.ManageWebhooks)) {
+            await message.reply('❌ Bot không có quyền **Quản lý Webhook** để xóa!');
+            return;
+          }
+          try {
+            const webhooks = await (message.channel as any).fetchWebhooks();
+            for (const webhook of webhooks.values()) {
+              await webhook.delete('Deleted by SentinelBot autochat clear command');
+            }
+            activeWebhooks.delete(message.channel.id);
+            await message.reply(`🗑️ Đã xóa thành công ${webhooks.size} Webhook trong kênh này và tắt chế độ tự động chat.`);
+          } catch (err: any) {
+            await message.reply(`❌ Lỗi khi xóa Webhook: ${err.message}`);
+          }
+        } else {
+          await message.reply(`Cách dùng:\n• \`.autochat on [link_webhook]\` (Bật, nếu ko nhập link bot sẽ tự tạo)\n• \`.autochat off\` (Tắt nội bộ)\n• \`.autochat clear\` (Xóa tất cả webhook trong kênh & Tắt)`);
+        }
         break;
       }
 
