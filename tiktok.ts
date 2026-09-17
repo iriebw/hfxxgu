@@ -243,7 +243,7 @@ export async function processTikTokLink(
     await target.deferReply();
   }
 
-  // Hàm gửi kết quả: Nếu là Message thông thường, xóa tin nhắn chứa link gốc và gửi video vào kênh kèm tag người gửi
+  // Hàm gửi kết quả: Gửi tin nhắn mới trước, sau đó mới xóa tin nhắn gốc
   const sendResponse = async (payload: {
     content?: string;
     embeds?: EmbedBuilder[];
@@ -256,34 +256,32 @@ export async function processTikTokLink(
     }
 
     const message = target as Message;
-    let deletedOriginal = false;
-
-    // Xóa tin nhắn gốc chứa link để làm sạch kênh chat
+    
+    // Gửi tin nhắn mới trước
+    let sentMessage: Message | null = null;
     try {
-      if (message.deletable) {
-        await message.delete();
-        deletedOriginal = true;
-      }
-    } catch (delErr: any) {
-      console.warn('[TikTok] Không thể xóa tin nhắn gốc (có thể thiếu quyền Quản Lý Tin Nhắn):', delErr?.message);
-    }
-
-    try {
-      if (deletedOriginal && 'send' in message.channel) {
+      if ('send' in message.channel) {
         const credit = `🎬 **TikTok gửi bởi <@${originalUser.id}>:**`;
         const updatedContent = payload.content ? `${credit}\n${payload.content}` : credit;
-        await (message.channel as any).send({
+        sentMessage = await (message.channel as any).send({
           ...payload,
           content: updatedContent,
         });
-      } else {
-        await message.reply(payload);
       }
     } catch (sendErr: any) {
       console.error('[TikTok] Lỗi khi gửi kết quả video:', sendErr);
-      if ('send' in message.channel) {
-        await (message.channel as any).send(payload).catch(() => {});
-      }
+      return; // Nếu không gửi được tin mới, không xóa tin cũ
+    }
+
+    // Nếu đã gửi thành công, mới xóa tin nhắn gốc
+    if (sentMessage) {
+        try {
+          if (message.deletable) {
+            await message.delete();
+          }
+        } catch (delErr: any) {
+          console.warn('[TikTok] Không thể xóa tin nhắn gốc:', delErr?.message);
+        }
     }
   };
 
