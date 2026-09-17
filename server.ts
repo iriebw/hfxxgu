@@ -16,7 +16,6 @@ import {
 import { handleMusicCommand } from './music';
 import { performWebScan, performFileScan, getScanHistory, clearScanHistory } from './scanner';
 import { calculateShip, calculateGayRate } from './fun';
-import { askAiChat } from './aiChat';
 import { fetchRobloxUser, buildRobloxDiscordEmbed } from './roblox';
 import {
   buildTicketPanel,
@@ -102,6 +101,9 @@ const guildPrefixes = new Map<string, string>();
 // Webhook mimicry (channelId -> Webhook URL)
 const activeWebhooks = new Map<string, string>();
 
+// Auto-delete users (guildId -> Set<userId>)
+const autoDeleteMap = new Map<string, Set<string>>();
+
 // Slash Commands Registry
 const registeredSlashCommands = [
   new SlashCommandBuilder()
@@ -171,14 +173,6 @@ const registeredSlashCommands = [
     .addAttachmentOption((opt) => opt.setName('thumbnail_file').setDescription('Tải file ảnh nhỏ góc phải').setRequired(false))
     .addChannelOption((opt) => opt.setName('channel').setDescription('Kênh gửi Embed (Mặc định: kênh hiện tại)').setRequired(false))
     .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageMessages),
-  new SlashCommandBuilder()
-    .setName('ai')
-    .setDescription('Trò chuyện, hỏi đáp với AI Gemini 3.8 Flash (có cọc & cà khịa cực mạnh)')
-    .addStringOption((opt) => opt.setName('prompt').setDescription('Câu hỏi hoặc nội dung bạn muốn hỏi AI').setRequired(true)),
-  new SlashCommandBuilder()
-    .setName('gemini')
-    .setDescription('Hỏi đáp với Gemini AI siêu thông minh')
-    .addStringOption((opt) => opt.setName('prompt').setDescription('Câu hỏi của bạn').setRequired(true)),
   new SlashCommandBuilder()
     .setName('tiktok')
     .setDescription('Tải và xem video TikTok không logo trực tiếp trên Discord')
@@ -577,28 +571,6 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  // --- Slash Command: /ai & /gemini ---
-  if (commandName === 'ai' || commandName === 'gemini') {
-    await interaction.deferReply();
-    const prompt = interaction.options.getString('prompt', true);
-    try {
-      const reply = await askAiChat(
-        prompt,
-        interaction.user.id,
-        interaction.user.displayName || interaction.user.username
-      );
-      if (reply.length <= 1950) {
-        await interaction.editReply(reply);
-      } else {
-        await interaction.editReply(reply.slice(0, 1950));
-        await (interaction.channel as any)?.send(reply.slice(1950, 3900)).catch(() => {});
-      }
-    } catch (err: any) {
-      await interaction.editReply(`❌ Lỗi AI: ${err.message || 'Không thể kết nối với Groq'}`);
-    }
-    return;
-  }
-
   // --- Slash Command: /tiktok ---
   if (commandName === 'tiktok') {
     const url = interaction.options.getString('url', true);
@@ -683,6 +655,15 @@ client.on('messageDelete', (message) => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
+  // --- Auto-Delete Users Logic ---
+  if (message.guild && autoDeleteMap.has(message.guild.id)) {
+    const guildWatchList = autoDeleteMap.get(message.guild.id)!;
+    if (guildWatchList.has(message.author.id)) {
+      await message.delete().catch(() => {});
+      return; // Already deleted, no further processing needed
+    }
+  }
+
   // --- Anti-Spam Logic ---
   if (message.guild && antiSpamEnabled.has(message.guild.id)) {
     const userId = message.author.id;
@@ -732,35 +713,6 @@ client.on('messageCreate', async (message) => {
 
   // --- Command & Mention Handling ---
   const prefix = message.guild ? (guildPrefixes.get(message.guild.id) || '.') : '.';
-
-  // Xử lý khi người dùng tag bot trực tiếp (@SentinelBot <câu hỏi>)
-  if (client.user && message.mentions.has(client.user.id) && !message.author.bot) {
-    const mentionRegex = new RegExp(`<@!?${client.user.id}>`, 'g');
-    const cleanContent = message.content.replace(mentionRegex, '').trim();
-
-    if (!cleanContent) {
-      await message.reply(`👋 Chào ${message.member?.displayName || message.author.username}! Mình là **SentinelBot AI** (Gemini 3.8 Flash). Bạn có thể hỏi mình bất cứ điều gì bằng lệnh \`${prefix}chat <câu hỏi>\` hoặc tag mình kèm nội dung nhé! 🤖🛡️`);
-      return;
-    }
-
-    if ('sendTyping' in message.channel) {
-      // @ts-ignore
-      message.channel.sendTyping().catch(() => {});
-    }
-
-    const reply = await askAiChat(
-      cleanContent,
-      message.author.id,
-      message.member?.displayName || message.author.username
-    );
-
-    if (reply.length <= 1950) {
-      await message.reply(reply);
-    } else {
-      await message.reply(reply.slice(0, 1950) + '...');
-    }
-    return;
-  }
 
   // --- Tự động nhận diện link TikTok (Auto-detect TikTok Links) ---
   if (!message.content.startsWith(prefix) && isTikTokAutoEmbedEnabled(message.guild?.id)) {
@@ -840,6 +792,85 @@ client.on('messageCreate', async (message) => {
         } catch (e) {
           await message.reply('Không thể gửi DM cho bạn. Hãy mở khóa tin nhắn riêng tư!');
         }
+        break;
+      }
+
+      case 'clearusers':
+      case 'clearuser':
+      case 'cleanusers': {
+        if (!message.member?.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+          await message.reply('❌ Bạn không có quyền quản lý tin nhắn (Manage Messages)!');
+          return;
+        }
+
+        const mentionedUsers = message.mentions.users;
+        if (mentionedUsers.size === 0) {
+            await message.reply(`Cách dùng: \`${prefix}clearusers @user1 @user2 ...\``);
+            return;
+        }
+
+        await message.delete().catch(() => {});
+        
+        const limit = 100; // Fetch limit
+        const fetched = await message.channel.messages.fetch({ limit });
+        const targetIds = new Set(mentionedUsers.map(u => u.id));
+        const messagesToDelete = fetched.filter(m => targetIds.has(m.author.id));
+        
+        if (messagesToDelete.size === 0) {
+            const reply = await message.channel.send('🧹 Không tìm thấy tin nhắn nào của những người dùng đã chọn trong 100 tin nhắn gần đây.');
+            setTimeout(() => reply.delete().catch(() => {}), 3500);
+            return;
+        }
+
+        const deleted = await (message.channel as any).bulkDelete(messagesToDelete, true);
+        const reply = await message.channel.send(`🧹 Đã dọn dẹp **${deleted.size}** tin nhắn từ các người dùng đã chọn.`);
+        setTimeout(() => reply.delete().catch(() => {}), 4000);
+        return;
+      }
+
+      case 'watch':
+      case 'watchuser': {
+        if (!message.member?.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+          await message.reply('❌ Bạn không có quyền quản lý tin nhắn!');
+          return;
+        }
+        const user = message.mentions.users.first();
+        if (!user) {
+          await message.reply(`Cách dùng: \`${prefix}watch @user\``);
+          return;
+        }
+        if (!autoDeleteMap.has(message.guild!.id)) {
+          autoDeleteMap.set(message.guild!.id, new Set());
+        }
+        autoDeleteMap.get(message.guild!.id)!.add(user.id);
+        await message.reply(`✅ Đã thêm **${user.tag}** vào danh sách auto-delete. Tin nhắn của họ sẽ bị xóa ngay lập tức!`);
+        break;
+      }
+
+      case 'unwatch':
+      case 'unwatchuser': {
+        if (!message.member?.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+          await message.reply('❌ Bạn không có quyền quản lý tin nhắn!');
+          return;
+        }
+        const user = message.mentions.users.first();
+        if (!user || !autoDeleteMap.has(message.guild!.id) || !autoDeleteMap.get(message.guild!.id)!.has(user.id)) {
+          await message.reply(`Cách dùng: \`${prefix}unwatch @user\` (phải là người đang bị watch)`);
+          return;
+        }
+        autoDeleteMap.get(message.guild!.id)!.delete(user.id);
+        await message.reply(`✅ Đã gỡ **${user.tag}** khỏi danh sách auto-delete.`);
+        break;
+      }
+
+      case 'watchlist':
+      case 'watchers': {
+        if (!autoDeleteMap.has(message.guild!.id) || autoDeleteMap.get(message.guild!.id)!.size === 0) {
+            await message.reply('Danh sách watch đang trống.');
+            return;
+        }
+        const ids = Array.from(autoDeleteMap.get(message.guild!.id)!);
+        await message.reply(`📋 Danh sách đang bị watch: ${ids.map(id => `<@${id}>`).join(', ')}`);
         break;
       }
 
