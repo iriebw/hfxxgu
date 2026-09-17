@@ -10,12 +10,20 @@ const PHISHING_KEYWORDS = [
   'free-nitro', 'nitro-gift', 'discorcl', 'dlscord', 'discrod', 'discord-app',
   'discord-nitro', 'steamcommunity-gift', 'steamcommynity', 'roblox-robux',
   'iplogger', 'grabify', '2no.co', 'leak', 'free-crypto', 'airdrop-claim',
-  'metamask-verify', 'token-grabber'
+  'metamask-verify', 'token-grabber', 'steam-community', 'giveaway-gift',
+  'account-checker', 'login-verify'
+];
+
+// Adult, Casino, Gambling content patterns
+const CONTENT_KEYWORDS = [
+  'sex', 'porn', 'xxx', 'adult', '18plus', 'phimnguoilon', 'jav',
+  'casino', 'bet', 'gambling', 'ca-cuoc', 'xoc-dia', 'da-ga', 'keo-nha-cai', 'cobac'
 ];
 
 const SUSPICIOUS_EXTENSIONS = new Set([
   'exe', 'bat', 'cmd', 'scr', 'vbs', 'ps1', 'vbe', 'hta', 'jar', 'pif',
-  'msi', 'reg', 'dll', 'com', 'wsf', 'cpl', 'iso', 'img', 'lnk'
+  'msi', 'reg', 'dll', 'com', 'wsf', 'cpl', 'iso', 'img', 'lnk',
+  'jse', 'vb', 'ocx', 'gadget', 'app', 'xap'
 ]);
 
 // Magic byte signatures for file format detection
@@ -92,6 +100,15 @@ export async function performWebScan(
     if (hostname.includes(keyword) || parsed.pathname.toLowerCase().includes(keyword)) {
       threatScore += 45;
       findings.push(`🚨 **Cảnh báo lừa đảo:** Chứa từ khóa độc hại/giả mạo (\`${keyword}\`)`);
+      break;
+    }
+  }
+
+  // Check for 18+, Casino, Gambling
+  for (const keyword of CONTENT_KEYWORDS) {
+    if (hostname.includes(keyword) || parsed.pathname.toLowerCase().includes(keyword)) {
+      threatScore += 35;
+      findings.push(`⚠️ **Cảnh báo nội dung:** Phát hiện từ khóa liên quan đến nội dung nhạy cảm/cờ bạc (\`${keyword}\`)`);
       break;
     }
   }
@@ -391,18 +408,26 @@ export async function performFileScan(
         const textContent = buffer.toString('utf-8', 0, Math.min(buffer.length, 50000));
         if (
           textContent.includes('discord.com/api/webhooks') ||
-          textContent.includes('token') && textContent.includes('localstorage')
+          (textContent.includes('token') && textContent.includes('localstorage')) ||
+          textContent.includes('discord/Local Storage/leveldb') ||
+          textContent.includes('d.py') ||
+          textContent.includes('PyHook')
         ) {
           threatScore += 80;
-          findings.push('🚨 **Phát hiện Discord Token Stealer:** Tìm thấy chuỗi trích xuất token và gửi về Webhook.');
+          findings.push('🚨 **Phát hiện Discord Token Stealer:** Tìm thấy chuỗi trích xuất token.');
         }
         if (
           textContent.includes('Invoke-WebRequest') ||
           textContent.includes('DownloadString') ||
-          textContent.includes('powershell -e')
+          textContent.includes('powershell -e') ||
+          textContent.includes('FromBase64String') ||
+          textContent.includes('WriteAllBytes') ||
+          textContent.includes('eval(') ||
+          textContent.includes('ExecuteStatement') ||
+          textContent.includes('new ActiveXObject')
         ) {
-          threatScore += 60;
-          findings.push('⚠️ **Phát hiện PowerShell Download Cradle:** Chứa lệnh tự động tải mã từ xa và thực thi.');
+          threatScore += 70;
+          findings.push('⚠️ **Phát hiện mã độc tiềm ẩn:** Chứa lệnh thực thi từ xa hoặc script obfuse (Obfuscated Script).');
         }
       }
     }
