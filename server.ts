@@ -54,6 +54,12 @@ import {
   setTikTokAutoEmbed,
   fetchTikTokData
 } from './tiktok';
+import {
+  resolveTargetUserAndMember,
+  buildWhoisEmbed,
+  buildAvatarEmbed,
+  buildBannerEmbed
+} from './userInfo';
 
 // Process error handling guards to ensure dev server and preview stability
 process.on('unhandledRejection', (reason, promise) => {
@@ -173,6 +179,18 @@ const registeredSlashCommands = [
     .setName('tiktok')
     .setDescription('Tải và xem video TikTok không logo trực tiếp trên Discord')
     .addStringOption((opt) => opt.setName('url').setDescription('Link video TikTok (vt.tiktok.com hoặc www.tiktok.com/...)').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('whois')
+    .setDescription('Xem thông tin chi tiết tài khoản của bạn hoặc người khác')
+    .addUserOption((opt) => opt.setName('user').setDescription('Người dùng cần tra cứu (Mặc định: chính bạn)').setRequired(false)),
+  new SlashCommandBuilder()
+    .setName('avatar')
+    .setDescription('Xem và tải ảnh đại diện (Avatar) chất lượng cao')
+    .addUserOption((opt) => opt.setName('user').setDescription('Người dùng cần xem avatar (Mặc định: chính bạn)').setRequired(false)),
+  new SlashCommandBuilder()
+    .setName('banner')
+    .setDescription('Xem và tải ảnh bìa (Banner Profile) của bạn hoặc người khác')
+    .addUserOption((opt) => opt.setName('user').setDescription('Người dùng cần xem banner (Mặc định: chính bạn)').setRequired(false)),
 ];
 
 client.on('ready', async () => {
@@ -601,6 +619,51 @@ client.on('interactionCreate', async (interaction) => {
     }
     return;
   }
+
+  // --- Slash Command: /whois & /userinfo ---
+  if (commandName === 'whois' || commandName === 'userinfo') {
+    await interaction.deferReply();
+    try {
+      const targetUser = interaction.options.getUser('user') || interaction.user;
+      const fullUser = await client.users.fetch(targetUser.id, { force: true });
+      const targetMember = interaction.guild ? await interaction.guild.members.fetch(targetUser.id).catch(() => null) : null;
+      const { embed, row } = buildWhoisEmbed(targetMember, fullUser);
+      await interaction.editReply({ embeds: [embed], components: [row] });
+    } catch (err: any) {
+      await interaction.editReply(`❌ Không thể tra cứu thông tin người dùng: ${err.message || 'Lỗi không xác định'}`);
+    }
+    return;
+  }
+
+  // --- Slash Command: /avatar ---
+  if (commandName === 'avatar') {
+    await interaction.deferReply();
+    try {
+      const targetUser = interaction.options.getUser('user') || interaction.user;
+      const fullUser = await client.users.fetch(targetUser.id, { force: true });
+      const targetMember = interaction.guild ? await interaction.guild.members.fetch(targetUser.id).catch(() => null) : null;
+      const { embed, row } = buildAvatarEmbed(targetMember, fullUser);
+      await interaction.editReply({ embeds: [embed], components: [row] });
+    } catch (err: any) {
+      await interaction.editReply(`❌ Không thể tải avatar: ${err.message || 'Lỗi không xác định'}`);
+    }
+    return;
+  }
+
+  // --- Slash Command: /banner ---
+  if (commandName === 'banner') {
+    await interaction.deferReply();
+    try {
+      const targetUser = interaction.options.getUser('user') || interaction.user;
+      const fullUser = await client.users.fetch(targetUser.id, { force: true });
+      const targetMember = interaction.guild ? await interaction.guild.members.fetch(targetUser.id).catch(() => null) : null;
+      const { embed, row } = buildBannerEmbed(fullUser, targetMember);
+      await interaction.editReply({ embeds: [embed], components: [row] });
+    } catch (err: any) {
+      await interaction.editReply(`❌ Không thể tải banner: ${err.message || 'Lỗi không xác định'}`);
+    }
+    return;
+  }
 });
 
 // Store deleted messages for !snipe
@@ -712,6 +775,7 @@ client.on('messageCreate', async (message) => {
             { name: '📱 TẢI & NHẬN DIỆN TIKTOK (NO WATERMARK)', value: `\`${prefix}tiktok <link>\`, \`${prefix}tt <link>\`, \`${prefix}tiktok auto <on/off>\`, hoặc Lệnh Slash: \`/tiktok url: <link>\` (Tự động xóa tin nhắn link gốc & gửi video không logo, nhạc nền MP3 kèm tag người gửi)` },
             { name: '🎯 BẢO MẬT & QUẢN TRỊ', value: `\`${prefix}clean <số|bot|@user|links>\`, \`${prefix}snipe\`, \`${prefix}lock\`, \`${prefix}unlock\`, \`${prefix}slowmode <giây>\`, \`${prefix}kick @user\`, \`${prefix}ban @user\`, \`${prefix}timeout @user <phút>\`, \`${prefix}antinuke <on/off>\`, \`${prefix}antispam <on/off>\`, \`${prefix}scanweb <url>\`, \`${prefix}scanfile\`, \`${prefix}prefix <ký tự mới>\`` },
             { name: '🎮 RICH PRESENCE (RPC)', value: `\`${prefix}rpc <playing/watching/listening/streaming/competing> <tên>\`, \`${prefix}rpc status <online/idle/dnd>\`, \`${prefix}rpc rotate <on/off>\`, \`${prefix}rpc info\`` },
+            { name: '👤 THÔNG TIN & HỒ SƠ NGƯỜI DÙNG', value: `\`${prefix}w [@user|ID]\`, \`${prefix}whois\`, \`${prefix}avt [@user|ID]\`, \`${prefix}banner [@user|ID]\` (Xem hồ sơ tài khoản, ngày tạo acc, ngày join server, badges, vai trò, quyền hạn, avatar full HD & banner)` },
             { name: '🧱 TRA CỨU TÀI KHOẢN ROBLOX', value: `\`${prefix}roblox <username/ID>\`, \`${prefix}rbx <tên>\`, hoặc Lệnh Slash: \`/roblox username: <tên>\` (Xem avatar, ngày join, tuổi acc, link profile)` },
             { name: '🎉 GIẢI TRÍ & THẦN SỐ HỌC', value: `\`${prefix}ghepdoi @crush\`, \`${prefix}ghepdoi @user1 @user2\`, \`${prefix}gay [@user]\`` },
             { name: '🎵 ÂM NHẠC & VOICE', value: `\`${prefix}play <tên/link>\`, \`${prefix}skip\`, \`${prefix}stop\`, \`${prefix}pause\`, \`${prefix}resume\`, \`${prefix}volume <1-150>\`, \`${prefix}queue\`, \`${prefix}nowplaying\`` }
@@ -1470,6 +1534,48 @@ client.on('messageCreate', async (message) => {
           if (reply.length > 1950) {
             await (message.channel as any).send(reply.slice(1950, 3900)).catch(() => {});
           }
+        }
+        break;
+      }
+
+      // --- User Profile, Avatar & Banner Commands ---
+      case 'w':
+      case 'whois':
+      case 'userinfo':
+      case 'user': {
+        const loadingMsg = await message.reply('🔍 Đang tra cứu thông tin người dùng...');
+        try {
+          const { user: targetUser, member: targetMember } = await resolveTargetUserAndMember(message, args, client);
+          const { embed, row } = buildWhoisEmbed(targetMember, targetUser);
+          await loadingMsg.edit({ content: '', embeds: [embed], components: [row] });
+        } catch (err: any) {
+          await loadingMsg.edit(`❌ Không thể tra cứu thông tin: ${err.message || 'Lỗi không xác định'}`);
+        }
+        break;
+      }
+
+      case 'avt':
+      case 'avatar':
+      case 'pfp': {
+        const loadingMsg = await message.reply('🔍 Đang tải avatar...');
+        try {
+          const { user: targetUser, member: targetMember } = await resolveTargetUserAndMember(message, args, client);
+          const { embed, row } = buildAvatarEmbed(targetMember, targetUser);
+          await loadingMsg.edit({ content: '', embeds: [embed], components: [row] });
+        } catch (err: any) {
+          await loadingMsg.edit(`❌ Không thể tải avatar: ${err.message || 'Lỗi không xác định'}`);
+        }
+        break;
+      }
+
+      case 'banner': {
+        const loadingMsg = await message.reply('🔍 Đang tải banner profile...');
+        try {
+          const { user: targetUser, member: targetMember } = await resolveTargetUserAndMember(message, args, client);
+          const { embed, row } = buildBannerEmbed(targetUser, targetMember);
+          await loadingMsg.edit({ content: '', embeds: [embed], components: [row] });
+        } catch (err: any) {
+          await loadingMsg.edit(`❌ Không thể tải banner: ${err.message || 'Lỗi không xác định'}`);
         }
         break;
       }
