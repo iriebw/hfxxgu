@@ -33,6 +33,9 @@ export async function askAiChat(
     return 'Dạ bạn muốn hỏi SentinelBot điều gì nào? Hãy nhập câu hỏi nhé! 🤖';
   }
 
+  // Debug log (không lộ key)
+  console.log('[DEBUG] GROQ_API_KEY status:', process.env.GROQ_API_KEY ? 'Present' : 'Missing');
+
   // Lấy hoặc khởi tạo lịch sử trò chuyện
   let history = customHistory || userConversations.get(userId) || [];
 
